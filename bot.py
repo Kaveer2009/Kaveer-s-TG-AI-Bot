@@ -79,22 +79,41 @@ def handle(message):
     if not message.text:
         return
 
-    # anti-spam
     if not can_use(message.from_user.id):
         return
 
     prompt = None
 
-    # ✅ Private chat
+    # ✅ PRIVATE CHAT
     if message.chat.type == "private":
         prompt = message.text.strip()
 
-    # ✅ Group: reply to bot message
+    # ✅ REPLY + TAG (NEW FEATURE 🔥)
+    elif message.reply_to_message and BOT_USERNAME and BOT_USERNAME.lower() in message.text.lower():
+
+        original_text = message.reply_to_message.text or ""
+
+        command = message.text.lower().replace(BOT_USERNAME.lower(), "").strip()
+
+        if not original_text:
+            bot.reply_to(message, "No text to process 😅")
+            return
+
+        if "summarize" in command:
+            prompt = f"Summarize this:\n\n{original_text}"
+
+        elif "explain" in command:
+            prompt = f"Explain this clearly:\n\n{original_text}"
+
+        else:
+            prompt = f"{command}:\n\n{original_text}"
+
+    # ✅ REPLY TO BOT
     elif message.reply_to_message:
         if message.reply_to_message.from_user and message.reply_to_message.from_user.id == bot.get_me().id:
             prompt = message.text.strip()
 
-    # ✅ Group: tagged
+    # ✅ TAG NORMAL
     elif BOT_USERNAME and BOT_USERNAME.lower() in message.text.lower():
         prompt = message.text.lower().replace(BOT_USERNAME.lower(), "").strip()
 

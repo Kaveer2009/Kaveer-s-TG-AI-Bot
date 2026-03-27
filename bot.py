@@ -9,7 +9,7 @@ BOT_USERNAME = os.getenv("BOT_USERNAME")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# Anti-spam
+# 🔒 Anti-spam cooldown
 last_used = {}
 
 def can_use(user_id):
@@ -19,55 +19,68 @@ def can_use(user_id):
     return True
 
 
-def ask_ai(prompt):
+# 🧠 Memory (per user)
+user_memory = {}
+
+def get_memory(user_id):
+    if user_id not in user_memory:
+        user_memory[user_id] = []
+    return user_memory[user_id]
+
+
+def ask_ai(prompt, user_id):
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
     }
 
+    memory = get_memory(user_id)
+
+    messages = [
+        {"role": "system", "content": "Give short, clear and useful answers."}
+    ] + memory + [
+        {"role": "user", "content": prompt}
+    ]
+
     data = {
         "model": "meta-llama/llama-3.3-70b-instruct:free",
-        "messages": [
-            {"role": "system", "content": "Give short, clear and useful answers."},
-            {"role": "user", "content": prompt}
-        ]
+        "messages": messages
     }
 
     try:
         response = requests.post(url, headers=headers, json=data, timeout=30)
 
+        # fallback if model fails
         if response.status_code != 200:
-            print("Primary failed → switching to auto")
             data["model"] = "openrouter/auto"
             response = requests.post(url, headers=headers, json=data, timeout=30)
 
             if response.status_code != 200:
-                print("Fallback failed:", response.text)
                 return "API error 😅"
 
-        try:
-            return response.json()["choices"][0]["message"]["content"]
-        except:
-            print("Bad response:", response.text)
-            return "Error parsing response 😅"
+        reply = response.json()["choices"][0]["message"]["content"]
 
-    except Exception as e:
-        print("Request failed:", e)
+        # 🧠 Save memory (limit last 6 messages)
+        memory.append({"role": "user", "content": prompt})
+        memory.append({"role": "assistant", "content": reply})
+
+        if len(memory) > 6:
+            memory.pop(0)
+            memory.pop(0)
+
+        return reply
+
+    except:
         return "Error 😅"
 
 
 @bot.message_handler(func=lambda message: True)
 def handle(message):
-    # 🔍 DEBUG LOGS
-    print("CHAT TYPE:", message.chat.type)
-    print("MESSAGE:", message.text)
-    print("BOT_USERNAME:", BOT_USERNAME)
-
     if not message.text:
         return
 
-    # Anti-spam
+    # 🚫 Anti-spam
     if not can_use(message.from_user.id):
         return
 
@@ -80,7 +93,6 @@ def handle(message):
         prompt = message.text.lower().replace(BOT_USERNAME.lower(), "").strip()
 
     else:
-        print("Ignored message")
         return
 
     if not prompt:
@@ -90,7 +102,7 @@ def handle(message):
     wait_msg = bot.reply_to(message, "Thinking... 🤔")
 
     try:
-        reply = ask_ai(prompt)
+        reply = ask_ai(prompt, message.from_user.id)
 
         bot.edit_message_text(
             reply[:4000],

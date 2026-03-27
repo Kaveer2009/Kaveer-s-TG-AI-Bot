@@ -52,8 +52,8 @@ def handle(message):
         prompt = message.text.strip()
 
     # group (tag required)
-    elif "@krf_ai_bot" in message.text:
-        prompt = message.text.replace("@krf_ai_bot", "").strip()
+    elif "@kaveers_bot" in message.text:
+        prompt = message.text.replace("@kaveers_bot", "").strip()
 
     else:
         return

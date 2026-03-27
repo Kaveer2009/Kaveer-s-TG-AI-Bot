@@ -1,5 +1,5 @@
 # ==============================
-# 🤖 TELEGRAM AI BOT (FINAL FIXED)
+# 🤖 TELEGRAM AI BOT (ULTIMATE OP)
 # ==============================
 
 import telebot
@@ -11,8 +11,6 @@ from bs4 import BeautifulSoup
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-
-# IMPORTANT FIX
 BOT_USERNAME = os.getenv("BOT_USERNAME", "").replace("@", "").lower()
 
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -106,7 +104,7 @@ def ask_ai(prompt, user_id):
     messages = [
         {
             "role": "system",
-            "content": "Give clean, simple answers without markdown symbols."
+            "content": "Give clean, simple answers without markdown symbols. Use '-' for bullet points."
         }
     ] + memory + [
         {"role": "user", "content": prompt}
@@ -146,30 +144,71 @@ def ask_ai(prompt, user_id):
 # ==============================
 @bot.message_handler(func=lambda message: True)
 def handle(message):
-    if not message.text:
+    if not message.text and not message.caption:
         return
 
     if not can_use(message.from_user.id):
         return
 
-    text = message.text.strip().lower()
+    text = (message.text or message.caption or "").strip()
+    text_lower = text.lower()
+
     prompt = None
+    context = None
 
-    # PRIVATE
+    # ==============================
+    # 🧑 PRIVATE
+    # ==============================
     if message.chat.type == "private":
-        prompt = message.text.strip()
+        prompt = text
 
-    # REPLY TO BOT
+    # ==============================
+    # 🔥 REPLY + TAG (WITH CONTEXT)
+    # ==============================
+    elif (
+        message.reply_to_message
+        and BOT_USERNAME
+        and f"@{BOT_USERNAME}" in text_lower
+    ):
+        reply_msg = message.reply_to_message
+
+        # detect original content
+        if reply_msg.text:
+            context = reply_msg.text
+        elif reply_msg.caption:
+            context = reply_msg.caption
+        elif reply_msg.photo:
+            context = "User sent an image."
+        else:
+            context = "Unsupported message type."
+
+        command = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
+
+        if not context:
+            return
+
+        if "summarize" in command:
+            prompt = f"Summarize this:\n\n{context}"
+        elif "explain" in command or "what is this" in command:
+            prompt = f"Explain this clearly:\n\n{context}"
+        else:
+            prompt = f"{command}\n\nContext:\n{context}"
+
+    # ==============================
+    # 🔁 REPLY TO BOT
+    # ==============================
     elif (
         message.reply_to_message
         and message.reply_to_message.from_user
         and message.reply_to_message.from_user.id == bot.get_me().id
     ):
-        prompt = message.text.strip()
+        prompt = text
 
-    # TAG DETECTION (FIXED)
-    elif BOT_USERNAME and f"@{BOT_USERNAME}" in text:
-        prompt = re.sub(f"@{BOT_USERNAME}", "", message.text, flags=re.IGNORECASE).strip()
+    # ==============================
+    # 📢 TAG ONLY
+    # ==============================
+    elif BOT_USERNAME and f"@{BOT_USERNAME}" in text_lower:
+        prompt = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
 
     else:
         return
@@ -177,7 +216,9 @@ def handle(message):
     if not prompt:
         return
 
-    # URL handling
+    # ==============================
+    # 🌐 URL handling
+    # ==============================
     url = extract_url(prompt)
 
     if url:
@@ -191,6 +232,9 @@ def handle(message):
     else:
         wait_msg = bot.reply_to(message, "Thinking... 🤔")
 
+    # ==============================
+    # 🤖 AI response
+    # ==============================
     try:
         reply = ask_ai(prompt, message.from_user.id)
 

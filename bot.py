@@ -1,5 +1,5 @@
 # ==============================
-# 🤖 TELEGRAM AI BOT (PRO VERSION)
+# 🤖 TELEGRAM AI BOT (OP VERSION)
 # Features:
 # - Private chat support
 # - Group tagging (@bot)
@@ -7,12 +7,16 @@
 # - Reply + tag → summarize/explain
 # - Memory (last messages)
 # - Anti-spam cooldown
+# - Link summarization 🔥
+# - Model fallback system 🔥
 # ==============================
 
 import telebot
 import requests
 import os
 import time
+import re
+from bs4 import BeautifulSoup
 
 # ==============================
 # 🔐 ENV VARIABLES
@@ -22,6 +26,15 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 BOT_USERNAME = os.getenv("BOT_USERNAME")
 
 bot = telebot.TeleBot(BOT_TOKEN)
+
+# ==============================
+# 🔁 MODEL FALLBACK LIST
+# ==============================
+MODELS = [
+    "qwen/qwen3-next-80b-a3b-instruct:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "stepfun/step-3.5-flash:free"
+]
 
 # ==============================
 # 🚫 ANTI-SPAM SYSTEM
@@ -34,7 +47,6 @@ def can_use(user_id):
     last_used[user_id] = time.time()
     return True
 
-
 # ==============================
 # 🧠 MEMORY SYSTEM
 # ==============================
@@ -45,12 +57,38 @@ def get_memory(user_id):
         user_memory[user_id] = []
     return user_memory[user_id]
 
+# ==============================
+# 🌐 URL + SCRAPER
+# ==============================
+def extract_url(text):
+    urls = re.findall(r'(https?://\S+)', text)
+    return urls[0] if urls else None
+
+def scrape_website(url):
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        r = requests.get(url, headers=headers, timeout=10)
+
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        # remove junk
+        for tag in soup(["script", "style"]):
+            tag.decompose()
+
+        text = soup.get_text(separator="\n")
+
+        return text[:8000]  # limit for model
+
+    except Exception as e:
+        print("Scrape error:", e)
+        return None
 
 # ==============================
 # 🤖 AI REQUEST FUNCTION
 # ==============================
 def ask_ai(prompt, user_id):
     url = "https://openrouter.ai/api/v1/chat/completions"
+
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
@@ -59,42 +97,44 @@ def ask_ai(prompt, user_id):
     memory = get_memory(user_id)
 
     messages = [
-        {"role": "system", "content": "Give short, clear and useful answers."}
+        {
+            "role": "system",
+            "content": "You are a smart research assistant. Give clear, structured, useful answers with reasoning."
+        }
     ] + memory + [
         {"role": "user", "content": prompt}
     ]
 
-    data = {
-        "model": "meta-llama/llama-3.3-70b-instruct:free",
-        "messages": messages
-    }
+    for model in MODELS:
+        try:
+            data = {
+                "model": model,
+                "messages": messages
+            }
 
-    try:
-        response = requests.post(url, headers=headers, json=data, timeout=30)
-
-        # fallback
-        if response.status_code != 200:
-            data["model"] = "openrouter/auto"
             response = requests.post(url, headers=headers, json=data, timeout=30)
 
             if response.status_code != 200:
-                return "API error 😅"
+                print(f"{model} failed:", response.text)
+                continue
 
-        reply = response.json()["choices"][0]["message"]["content"]
+            reply = response.json()["choices"][0]["message"]["content"]
 
-        # save memory
-        memory.append({"role": "user", "content": prompt})
-        memory.append({"role": "assistant", "content": reply})
+            # save memory
+            memory.append({"role": "user", "content": prompt})
+            memory.append({"role": "assistant", "content": reply})
 
-        if len(memory) > 6:
-            memory.pop(0)
-            memory.pop(0)
+            if len(memory) > 6:
+                memory.pop(0)
+                memory.pop(0)
 
-        return reply
+            return reply
 
-    except:
-        return "Error 😅"
+        except Exception as e:
+            print("Model error:", model, e)
+            continue
 
+    return "❌ All models failed. Try again later."
 
 # ==============================
 # 💬 MESSAGE HANDLER
@@ -108,23 +148,35 @@ def handle(message):
         return
 
     prompt = None
+    text = message.text.strip()
 
     # ==============================
     # 🧑‍💻 PRIVATE CHAT
     # ==============================
     if message.chat.type == "private":
-        prompt = message.text.strip()
+        url = extract_url(text)
+
+        if url:
+            bot.reply_to(message, "🔎 Reading link...")
+            content = scrape_website(url)
+
+            if content:
+                prompt = f"Summarize this article in bullet points and key insights:\n\n{content}"
+            else:
+                prompt = f"Explain this link clearly: {url}"
+        else:
+            prompt = text
 
     # ==============================
-    # 🔥 REPLY + TAG (summarize/explain)
+    # 🔥 REPLY + TAG
     # ==============================
     elif (
         message.reply_to_message
         and BOT_USERNAME
-        and BOT_USERNAME.lower() in message.text.lower()
+        and BOT_USERNAME.lower() in text.lower()
     ):
         original_text = message.reply_to_message.text or ""
-        command = message.text.lower().replace(BOT_USERNAME.lower(), "").strip()
+        command = text.lower().replace(BOT_USERNAME.lower(), "").strip()
 
         if not original_text:
             return
@@ -137,23 +189,36 @@ def handle(message):
             prompt = f"{command}:\n\n{original_text}"
 
     # ==============================
-    # 🤖 REPLY TO BOT ONLY
+    # 🤖 REPLY TO BOT
     # ==============================
     elif (
         message.reply_to_message
         and message.reply_to_message.from_user
         and message.reply_to_message.from_user.id == bot.get_me().id
     ):
-        prompt = message.text.strip()
+        prompt = text
 
     # ==============================
     # 📢 TAG NORMAL
     # ==============================
-    elif BOT_USERNAME and BOT_USERNAME.lower() in message.text.lower():
-        prompt = message.text.lower().replace(BOT_USERNAME.lower(), "").strip()
+    elif BOT_USERNAME and BOT_USERNAME.lower() in text.lower():
+        cleaned = text.lower().replace(BOT_USERNAME.lower(), "").strip()
+
+        url = extract_url(cleaned)
+
+        if url:
+            bot.reply_to(message, "🔎 Reading link...")
+            content = scrape_website(url)
+
+            if content:
+                prompt = f"Summarize this article in bullet points and key insights:\n\n{content}"
+            else:
+                prompt = f"Explain this link clearly: {url}"
+        else:
+            prompt = cleaned
 
     else:
-        return  # ❗ ignore everything else
+        return  # ignore everything else
 
     if not prompt:
         return
@@ -176,7 +241,6 @@ def handle(message):
             chat_id=wait_msg.chat.id,
             message_id=wait_msg.message_id
         )
-
 
 # ==============================
 # 🚀 START BOT

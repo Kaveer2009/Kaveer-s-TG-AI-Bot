@@ -5,11 +5,11 @@ import time
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-BOT_USERNAME = os.getenv("BOT_USERNAME")  # set this in Railway
+BOT_USERNAME = os.getenv("BOT_USERNAME")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# 🔒 Anti-spam cooldown
+# Anti-spam
 last_used = {}
 
 def can_use(user_id):
@@ -37,7 +37,6 @@ def ask_ai(prompt):
     try:
         response = requests.post(url, headers=headers, json=data, timeout=30)
 
-        # fallback if model fails
         if response.status_code != 200:
             print("Primary failed → switching to auto")
             data["model"] = "openrouter/auto"
@@ -60,22 +59,28 @@ def ask_ai(prompt):
 
 @bot.message_handler(func=lambda message: True)
 def handle(message):
+    # 🔍 DEBUG LOGS
+    print("CHAT TYPE:", message.chat.type)
+    print("MESSAGE:", message.text)
+    print("BOT_USERNAME:", BOT_USERNAME)
+
     if not message.text:
         return
 
-    # 🚫 Anti-spam
+    # Anti-spam
     if not can_use(message.from_user.id):
         return
 
-    # private chat
+    # Private chat
     if message.chat.type == "private":
         prompt = message.text.strip()
 
-    # group (tag required)
-    elif BOT_USERNAME and BOT_USERNAME in message.text:
-        prompt = message.text.replace(BOT_USERNAME, "").strip()
+    # Group (tag required)
+    elif BOT_USERNAME and BOT_USERNAME.lower() in message.text.lower():
+        prompt = message.text.lower().replace(BOT_USERNAME.lower(), "").strip()
 
     else:
+        print("Ignored message")
         return
 
     if not prompt:

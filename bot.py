@@ -1,5 +1,5 @@
 # ==============================
-# 🤖 TELEGRAM AI BOT (OP VERSION)
+# 🤖 TELEGRAM AI BOT (OP VERSION - CLEAN)
 # Features:
 # - Private chat support
 # - Group tagging (@bot)
@@ -9,6 +9,7 @@
 # - Anti-spam cooldown
 # - Link summarization 🔥
 # - Model fallback system 🔥
+# - Single message (no duplicate bug) ✅
 # ==============================
 
 import telebot
@@ -71,13 +72,11 @@ def scrape_website(url):
 
         soup = BeautifulSoup(r.text, "html.parser")
 
-        # remove junk
         for tag in soup(["script", "style"]):
             tag.decompose()
 
         text = soup.get_text(separator="\n")
-
-        return text[:8000]  # limit for model
+        return text[:8000]
 
     except Exception as e:
         print("Scrape error:", e)
@@ -147,8 +146,14 @@ def handle(message):
     if not can_use(message.from_user.id):
         return
 
-    prompt = None
     text = message.text.strip()
+    prompt = None
+
+    # decide initial message (ONLY ONE MESSAGE)
+    wait_msg = bot.reply_to(
+        message,
+        "🔎 Reading & analyzing..." if extract_url(text) else "Thinking... 🤔"
+    )
 
     # ==============================
     # 🧑‍💻 PRIVATE CHAT
@@ -157,7 +162,6 @@ def handle(message):
         url = extract_url(text)
 
         if url:
-            bot.reply_to(message, "🔎 Reading link...")
             content = scrape_website(url)
 
             if content:
@@ -207,7 +211,6 @@ def handle(message):
         url = extract_url(cleaned)
 
         if url:
-            bot.reply_to(message, "🔎 Reading link...")
             content = scrape_website(url)
 
             if content:
@@ -218,12 +221,10 @@ def handle(message):
             prompt = cleaned
 
     else:
-        return  # ignore everything else
+        return
 
     if not prompt:
         return
-
-    wait_msg = bot.reply_to(message, "Thinking... 🤔")
 
     try:
         reply = ask_ai(prompt, message.from_user.id)

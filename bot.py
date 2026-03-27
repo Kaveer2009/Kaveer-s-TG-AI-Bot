@@ -1,15 +1,5 @@
 # ==============================
-# 🤖 TELEGRAM AI BOT (OP VERSION - CLEAN)
-# Features:
-# - Private chat support
-# - Group tagging (@bot)
-# - Reply-to-bot conversation
-# - Reply + tag → summarize/explain
-# - Memory (last messages)
-# - Anti-spam cooldown
-# - Link summarization 🔥
-# - Model fallback system 🔥
-# - Single message (no duplicate bug) ✅
+# 🤖 TELEGRAM AI BOT (ULTRA OP)
 # ==============================
 
 import telebot
@@ -19,9 +9,6 @@ import time
 import re
 from bs4 import BeautifulSoup
 
-# ==============================
-# 🔐 ENV VARIABLES
-# ==============================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 BOT_USERNAME = os.getenv("BOT_USERNAME")
@@ -29,7 +16,7 @@ BOT_USERNAME = os.getenv("BOT_USERNAME")
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ==============================
-# 🔁 MODEL FALLBACK LIST
+# 🔁 MODELS
 # ==============================
 MODELS = [
     "qwen/qwen3-next-80b-a3b-instruct:free",
@@ -38,7 +25,7 @@ MODELS = [
 ]
 
 # ==============================
-# 🚫 ANTI-SPAM SYSTEM
+# 🚫 ANTI-SPAM
 # ==============================
 last_used = {}
 
@@ -49,7 +36,7 @@ def can_use(user_id):
     return True
 
 # ==============================
-# 🧠 MEMORY SYSTEM
+# 🧠 MEMORY
 # ==============================
 user_memory = {}
 
@@ -59,15 +46,35 @@ def get_memory(user_id):
     return user_memory[user_id]
 
 # ==============================
-# 🌐 URL + SCRAPER
+# ✨ CLEAN OUTPUT (REMOVE MARKDOWN)
+# ==============================
+def clean_text(text):
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = re.sub(r"\*(.*?)\*", r"\1", text)
+    text = re.sub(r"#+\s*", "", text)
+    text = re.sub(r"`+", "", text)
+    return text
+
+# ==============================
+# 🌐 URL HANDLING
 # ==============================
 def extract_url(text):
     urls = re.findall(r'(https?://\S+)', text)
     return urls[0] if urls else None
 
+def fix_reddit_url(url):
+    if "reddit.com" in url:
+        return url.replace("www.reddit.com", "old.reddit.com")
+    return url
+
 def scrape_website(url):
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
+        url = fix_reddit_url(url)
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        }
+
         r = requests.get(url, headers=headers, timeout=10)
 
         soup = BeautifulSoup(r.text, "html.parser")
@@ -76,6 +83,10 @@ def scrape_website(url):
             tag.decompose()
 
         text = soup.get_text(separator="\n")
+
+        # clean extra empty lines
+        text = "\n".join([line.strip() for line in text.splitlines() if line.strip()])
+
         return text[:8000]
 
     except Exception as e:
@@ -83,7 +94,7 @@ def scrape_website(url):
         return None
 
 # ==============================
-# 🤖 AI REQUEST FUNCTION
+# 🤖 AI REQUEST
 # ==============================
 def ask_ai(prompt, user_id):
     url = "https://openrouter.ai/api/v1/chat/completions"
@@ -98,7 +109,11 @@ def ask_ai(prompt, user_id):
     messages = [
         {
             "role": "system",
-            "content": "You are a smart research assistant. Give clear, structured, useful answers with reasoning."
+            "content": (
+                "You are a smart research assistant. "
+                "Give clean, well-structured answers WITHOUT markdown symbols. "
+                "Use simple paragraphs and bullet points using '-' only."
+            )
         }
     ] + memory + [
         {"role": "user", "content": prompt}
@@ -114,12 +129,12 @@ def ask_ai(prompt, user_id):
             response = requests.post(url, headers=headers, json=data, timeout=30)
 
             if response.status_code != 200:
-                print(f"{model} failed:", response.text)
                 continue
 
             reply = response.json()["choices"][0]["message"]["content"]
+            reply = clean_text(reply)
 
-            # save memory
+            # memory
             memory.append({"role": "user", "content": prompt})
             memory.append({"role": "assistant", "content": reply})
 
@@ -133,10 +148,10 @@ def ask_ai(prompt, user_id):
             print("Model error:", model, e)
             continue
 
-    return "❌ All models failed. Try again later."
+    return "❌ All models failed."
 
 # ==============================
-# 💬 MESSAGE HANDLER
+# 💬 HANDLER
 # ==============================
 @bot.message_handler(func=lambda message: True)
 def handle(message):
@@ -147,17 +162,15 @@ def handle(message):
         return
 
     text = message.text.strip()
-    prompt = None
 
-    # decide initial message (ONLY ONE MESSAGE)
     wait_msg = bot.reply_to(
         message,
         "🔎 Reading & analyzing..." if extract_url(text) else "Thinking... 🤔"
     )
 
-    # ==============================
-    # 🧑‍💻 PRIVATE CHAT
-    # ==============================
+    prompt = None
+
+    # PRIVATE
     if message.chat.type == "private":
         url = extract_url(text)
 
@@ -165,46 +178,36 @@ def handle(message):
             content = scrape_website(url)
 
             if content:
-                prompt = f"Summarize this article in bullet points and key insights:\n\n{content}"
+                prompt = f"Explain this content simply and clearly:\n\n{content}"
             else:
-                prompt = f"Explain this link clearly: {url}"
+                prompt = f"Explain this link: {url}"
         else:
             prompt = text
 
-    # ==============================
-    # 🔥 REPLY + TAG
-    # ==============================
+    # REPLY + TAG
     elif (
         message.reply_to_message
         and BOT_USERNAME
         and BOT_USERNAME.lower() in text.lower()
     ):
-        original_text = message.reply_to_message.text or ""
+        original = message.reply_to_message.text or ""
         command = text.lower().replace(BOT_USERNAME.lower(), "").strip()
 
-        if not original_text:
-            return
-
         if "summarize" in command:
-            prompt = f"Summarize this:\n\n{original_text}"
+            prompt = f"Summarize this:\n\n{original}"
         elif "explain" in command:
-            prompt = f"Explain this clearly:\n\n{original_text}"
+            prompt = f"Explain this:\n\n{original}"
         else:
-            prompt = f"{command}:\n\n{original_text}"
+            prompt = f"{command}:\n\n{original}"
 
-    # ==============================
-    # 🤖 REPLY TO BOT
-    # ==============================
+    # REPLY TO BOT
     elif (
         message.reply_to_message
-        and message.reply_to_message.from_user
         and message.reply_to_message.from_user.id == bot.get_me().id
     ):
         prompt = text
 
-    # ==============================
-    # 📢 TAG NORMAL
-    # ==============================
+    # TAG NORMAL
     elif BOT_USERNAME and BOT_USERNAME.lower() in text.lower():
         cleaned = text.lower().replace(BOT_USERNAME.lower(), "").strip()
 
@@ -214,16 +217,13 @@ def handle(message):
             content = scrape_website(url)
 
             if content:
-                prompt = f"Summarize this article in bullet points and key insights:\n\n{content}"
+                prompt = f"Explain this content clearly:\n\n{content}"
             else:
-                prompt = f"Explain this link clearly: {url}"
+                prompt = f"Explain this link: {url}"
         else:
             prompt = cleaned
 
     else:
-        return
-
-    if not prompt:
         return
 
     try:
@@ -244,7 +244,7 @@ def handle(message):
         )
 
 # ==============================
-# 🚀 START BOT
+# 🚀 START
 # ==============================
 print("Bot is running...")
 bot.infinity_polling()

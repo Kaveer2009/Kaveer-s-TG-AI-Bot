@@ -9,7 +9,7 @@ BOT_USERNAME = os.getenv("BOT_USERNAME")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# 🔒 Anti-spam cooldown
+# 🔒 Anti-spam
 last_used = {}
 
 def can_use(user_id):
@@ -19,7 +19,7 @@ def can_use(user_id):
     return True
 
 
-# 🧠 Memory (per user)
+# 🧠 Memory
 user_memory = {}
 
 def get_memory(user_id):
@@ -51,7 +51,6 @@ def ask_ai(prompt, user_id):
     try:
         response = requests.post(url, headers=headers, json=data, timeout=30)
 
-        # fallback if model fails
         if response.status_code != 200:
             data["model"] = "openrouter/auto"
             response = requests.post(url, headers=headers, json=data, timeout=30)
@@ -61,7 +60,7 @@ def ask_ai(prompt, user_id):
 
         reply = response.json()["choices"][0]["message"]["content"]
 
-        # 🧠 Save memory (limit last 6 messages)
+        # save memory
         memory.append({"role": "user", "content": prompt})
         memory.append({"role": "assistant", "content": reply})
 
@@ -80,15 +79,22 @@ def handle(message):
     if not message.text:
         return
 
-    # 🚫 Anti-spam
+    # anti-spam
     if not can_use(message.from_user.id):
         return
 
-    # Private chat
+    prompt = None
+
+    # ✅ Private chat
     if message.chat.type == "private":
         prompt = message.text.strip()
 
-    # Group (tag required)
+    # ✅ Group: reply to bot message
+    elif message.reply_to_message:
+        if message.reply_to_message.from_user and message.reply_to_message.from_user.id == bot.get_me().id:
+            prompt = message.text.strip()
+
+    # ✅ Group: tagged
     elif BOT_USERNAME and BOT_USERNAME.lower() in message.text.lower():
         prompt = message.text.lower().replace(BOT_USERNAME.lower(), "").strip()
 

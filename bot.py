@@ -1,5 +1,5 @@
 # ==============================
-# 🤖 TELEGRAM AI BOT (FINAL OP - CONTROLLED)
+# 🤖 TELEGRAM AI BOT (FINAL FIXED)
 # ==============================
 
 import telebot
@@ -11,7 +11,9 @@ from bs4 import BeautifulSoup
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-BOT_USERNAME = os.getenv("BOT_USERNAME")  # without @
+
+# IMPORTANT FIX
+BOT_USERNAME = os.getenv("BOT_USERNAME", "").replace("@", "").lower()
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -56,7 +58,7 @@ def clean_text(text):
     return text
 
 # ==============================
-# 🌐 URL HANDLING
+# 🌐 URL
 # ==============================
 def extract_url(text):
     urls = re.findall(r'(https?://\S+)', text)
@@ -71,18 +73,16 @@ def scrape_website(url):
     try:
         url = fix_reddit_url(url)
 
-        headers = {
-            "User-Agent": "Mozilla/5.0"
-        }
-
+        headers = {"User-Agent": "Mozilla/5.0"}
         r = requests.get(url, headers=headers, timeout=10)
+
         soup = BeautifulSoup(r.text, "html.parser")
 
         for tag in soup(["script", "style"]):
             tag.decompose()
 
         text = soup.get_text(separator="\n")
-        text = "\n".join([line.strip() for line in text.splitlines() if line.strip()])
+        text = "\n".join([l.strip() for l in text.splitlines() if l.strip()])
 
         return text[:8000]
 
@@ -106,11 +106,7 @@ def ask_ai(prompt, user_id):
     messages = [
         {
             "role": "system",
-            "content": (
-                "You are a smart research assistant. "
-                "Give clean, simple, well-structured answers WITHOUT markdown symbols. "
-                "Use bullet points with '-' only."
-            )
+            "content": "Give clean, simple answers without markdown symbols."
         }
     ] + memory + [
         {"role": "user", "content": prompt}
@@ -131,7 +127,6 @@ def ask_ai(prompt, user_id):
             reply = response.json()["choices"][0]["message"]["content"]
             reply = clean_text(reply)
 
-            # save memory
             memory.append({"role": "user", "content": prompt})
             memory.append({"role": "assistant", "content": reply})
 
@@ -147,7 +142,7 @@ def ask_ai(prompt, user_id):
     return "❌ All models failed."
 
 # ==============================
-# 💬 HANDLER (STRICT CONTROL)
+# 💬 HANDLER
 # ==============================
 @bot.message_handler(func=lambda message: True)
 def handle(message):
@@ -157,40 +152,32 @@ def handle(message):
     if not can_use(message.from_user.id):
         return
 
-    text = message.text.strip()
+    text = message.text.strip().lower()
     prompt = None
 
-    # ==============================
-    # 🧑 PRIVATE CHAT (always respond)
-    # ==============================
+    # PRIVATE
     if message.chat.type == "private":
-        prompt = text
+        prompt = message.text.strip()
 
-    # ==============================
-    # 🔁 REPLY TO BOT ONLY
-    # ==============================
+    # REPLY TO BOT
     elif (
         message.reply_to_message
         and message.reply_to_message.from_user
         and message.reply_to_message.from_user.id == bot.get_me().id
     ):
-        prompt = text
+        prompt = message.text.strip()
 
-    # ==============================
-    # 📢 TAG ONLY (@bot)
-    # ==============================
-    elif BOT_USERNAME and f"@{BOT_USERNAME.lower()}" in text.lower():
-        prompt = text.replace(f"@{BOT_USERNAME}", "").strip()
+    # TAG DETECTION (FIXED)
+    elif BOT_USERNAME and f"@{BOT_USERNAME}" in text:
+        prompt = re.sub(f"@{BOT_USERNAME}", "", message.text, flags=re.IGNORECASE).strip()
 
     else:
-        return  # ❌ ignore everything else
+        return
 
     if not prompt:
         return
 
-    # ==============================
-    # 🌐 URL handling
-    # ==============================
+    # URL handling
     url = extract_url(prompt)
 
     if url:
@@ -198,15 +185,12 @@ def handle(message):
         content = scrape_website(url)
 
         if content:
-            prompt = f"Explain this content clearly:\n\n{content}"
+            prompt = f"Explain this clearly:\n\n{content}"
         else:
             prompt = f"Explain this link: {url}"
     else:
         wait_msg = bot.reply_to(message, "Thinking... 🤔")
 
-    # ==============================
-    # 🤖 AI response
-    # ==============================
     try:
         reply = ask_ai(prompt, message.from_user.id)
 

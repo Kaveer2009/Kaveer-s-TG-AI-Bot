@@ -11,7 +11,6 @@ from bs4 import BeautifulSoup
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "").replace("@", "").lower()
 
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -48,44 +47,22 @@ def get_memory(chat_id, user_id):
     return chat_memory[key]
 
 # ==============================
-# 🎨 IMAGE GENERATION (FIXED 🔥)
+# 🎨 IMAGE GENERATION (WORKING 🔥)
 # ==============================
 def generate_image(prompt):
-    API_URL = "https://router.huggingface.co/hf-inference/models/runwayml/stable-diffusion-v1-5"
+    try:
+        url = f"https://image.pollinations.ai/prompt/{prompt.replace(' ', '%20')}"
+        response = requests.get(url, timeout=60)
 
-    headers = {
-        "Authorization": f"Bearer {HUGGINGFACE_API_KEY}",
-        "Content-Type": "application/json"
-    }
+        if response.status_code == 200:
+            return response.content
+        else:
+            print("Image error:", response.status_code)
+            return None
 
-    for _ in range(3):
-        try:
-            response = requests.post(
-                API_URL,
-                headers=headers,
-                json={"inputs": prompt},
-                timeout=60
-            )
-
-            print("STATUS:", response.status_code)
-            print("RESPONSE:", response.text[:200])
-
-            if response.status_code == 200:
-                return response.content
-
-            elif response.status_code == 503:
-                print("Model loading... retrying")
-                time.sleep(5)
-
-            else:
-                print("Image error:", response.text)
-                return None
-
-        except Exception as e:
-            print("Request error:", e)
-            time.sleep(3)
-
-    return None
+    except Exception as e:
+        print("Error:", e)
+        return None
 
 # ==============================
 # ✨ CLEAN OUTPUT
@@ -298,7 +275,12 @@ def handle(message):
         )
 
 # ==============================
-# 🚀 START
+# 🚀 START (FINAL FIX 🔥)
 # ==============================
 print("Bot is running...")
-bot.infinity_polling()
+
+bot.infinity_polling(
+    skip_pending=True,
+    timeout=20,
+    long_polling_timeout=20
+)

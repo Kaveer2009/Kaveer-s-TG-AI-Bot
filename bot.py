@@ -51,14 +51,24 @@ def get_memory(chat_id, user_id):
 # 🎨 IMAGE GENERATION (FIXED 🔥)
 # ==============================
 def generate_image(prompt):
-    API_URL = "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5"
+    API_URL = "https://router.huggingface.co/hf-inference/models/runwayml/stable-diffusion-v1-5"
+
     headers = {
-        "Authorization": f"Bearer {HUGGINGFACE_API_KEY}"
+        "Authorization": f"Bearer {HUGGINGFACE_API_KEY}",
+        "Content-Type": "application/json"
     }
 
-    for _ in range(3):  # retry system
+    for _ in range(3):
         try:
-            response = requests.post(API_URL, headers=headers, json={"inputs": prompt}, timeout=60)
+            response = requests.post(
+                API_URL,
+                headers=headers,
+                json={"inputs": prompt},
+                timeout=60
+            )
+
+            print("STATUS:", response.status_code)
+            print("RESPONSE:", response.text[:200])
 
             if response.status_code == 200:
                 return response.content

@@ -36,14 +36,15 @@ def can_use(user_id):
     return True
 
 # ==============================
-# 🧠 MEMORY
+# 🧠 MEMORY (FIXED ✅)
 # ==============================
-user_memory = {}
+chat_memory = {}
 
-def get_memory(user_id):
-    if user_id not in user_memory:
-        user_memory[user_id] = []
-    return user_memory[user_id]
+def get_memory(chat_id, user_id):
+    key = f"{chat_id}_{user_id}"  # unique per chat + user
+    if key not in chat_memory:
+        chat_memory[key] = []
+    return chat_memory[key]
 
 # ==============================
 # ✨ CLEAN OUTPUT
@@ -91,7 +92,7 @@ def scrape_website(url):
 # ==============================
 # 🤖 AI
 # ==============================
-def ask_ai(prompt, user_id):
+def ask_ai(prompt, chat_id, user_id):
     url = "https://openrouter.ai/api/v1/chat/completions"
 
     headers = {
@@ -99,7 +100,7 @@ def ask_ai(prompt, user_id):
         "Content-Type": "application/json"
     }
 
-    memory = get_memory(user_id)
+    memory = get_memory(chat_id, user_id)
 
     messages = [
         {
@@ -172,7 +173,6 @@ def handle(message):
     ):
         reply_msg = message.reply_to_message
 
-        # detect original content
         if reply_msg.text:
             context = reply_msg.text
         elif reply_msg.caption:
@@ -236,7 +236,7 @@ def handle(message):
     # 🤖 AI response
     # ==============================
     try:
-        reply = ask_ai(prompt, message.from_user.id)
+        reply = ask_ai(prompt, message.chat.id, message.from_user.id)
 
         bot.edit_message_text(
             reply[:4000],

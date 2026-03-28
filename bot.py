@@ -8,6 +8,7 @@ import os
 import time
 import re
 from bs4 import BeautifulSoup
+from io import BytesIO
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -141,6 +142,72 @@ def ask_ai(prompt, chat_id, user_id):
     return "❌ All models failed."
 
 # ==============================
+# 🎨 IMAGE GENERATION
+# ==============================
+@bot.message_handler(commands=['image'])
+def generate_image(message):
+    prompt = message.text.replace('/image', '').strip()
+
+    if not prompt:
+        bot.reply_to(message, "Example:\n/image a cute cat 🐱")
+        return
+
+    msg = bot.reply_to(message, "Generating AI image... ⏳")
+
+    try:
+        response = requests.post(
+            "https://stablehorde.net/api/v2/generate/async",
+            json={
+                "prompt": prompt,
+                "params": {
+                    "width": 512,
+                    "height": 512,
+                    "steps": 20
+                }
+            },
+            headers={"apikey": "0000000000"},
+            timeout=30
+        ).json()
+
+        request_id = response.get("id")
+        if not request_id:
+            bot.reply_to(message, "❌ Failed to start image generation")
+            return
+
+        image_url = None
+        for _ in range(15):
+            check = requests.get(
+                f"https://stablehorde.net/api/v2/generate/status/{request_id}",
+                timeout=20
+            ).json()
+
+            if check.get("done"):
+                gens = check.get("generations")
+                if gens:
+                    image_url = gens[0]["img"]
+                    break
+
+            time.sleep(3)
+
+        if not image_url:
+            bot.reply_to(message, "⏳ Took too long, try again")
+        else:
+            img_data = requests.get(image_url).content
+            bot.send_photo(
+                message.chat.id,
+                BytesIO(img_data),
+                caption=f"🎨 Prompt: {prompt}"
+            )
+
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
+
+    try:
+        bot.delete_message(message.chat.id, msg.message_id)
+    except:
+        pass
+
+# ==============================
 # 💬 HANDLER (STRICT 🔥)
 # ==============================
 @bot.message_handler(func=lambda message: True)
@@ -157,25 +224,19 @@ def handle(message):
     prompt = None
     context = None
 
-    # 🧑 PRIVATE CHAT
     if message.chat.type == "private":
         prompt = text
 
-    # 🔥 REPLY + TAG ONLY
     elif (
         message.reply_to_message
         and BOT_USERNAME
         and f"@{BOT_USERNAME}" in text_lower
     ):
         reply_msg = message.reply_to_message
-
         context = reply_msg.text or reply_msg.caption or "Unsupported message"
-
         command = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
-
         prompt = f"{command}\n\nContext:\n{context}"
 
-    # 🔁 REPLY TO BOT
     elif (
         message.reply_to_message
         and message.reply_to_message.from_user
@@ -183,17 +244,15 @@ def handle(message):
     ):
         prompt = text
 
-    # 📢 TAG ONLY
     elif BOT_USERNAME and f"@{BOT_USERNAME}" in text_lower:
         prompt = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
 
     else:
-        return  # ❌ IGNORE EVERYTHING ELSE
+        return
 
     if not prompt:
         return
 
-    # 🌐 URL
     url = extract_url(prompt)
 
     if url:

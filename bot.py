@@ -50,28 +50,55 @@ def get_memory(chat_id, user_id):
 # 🎨 IMAGE GENERATION (REAL FIX 🔥)
 # ==============================
 def generate_image(prompt):
-    prompt_encoded = prompt.replace(" ", "%20")
+    try:
+        response = requests.post(
+            "https://stablehorde.net/api/v2/generate/async",
+            json={
+                "prompt": prompt,
+                "params": {
+                    "width": 512,
+                    "height": 512,
+                    "steps": 20
+                }
+            },
+            timeout=15
+        )
 
-    urls = [
-        f"https://image.pollinations.ai/prompt/{prompt_encoded}",
-        f"https://image.pollinations.ai/prompt/{prompt_encoded}?model=flux",
-        f"https://image.pollinations.ai/prompt/{prompt_encoded}?model=stable"
-    ]
+        data = response.json()
+        job_id = data.get("id")
 
-    for url in urls:
-        for i in range(2):  # retry each
-            try:
-                res = requests.get(url, timeout=15)
+        if not job_id:
+            print("No job ID")
+            return None
 
-                if res.status_code == 200 and len(res.content) > 1000:
-                    return res.content
+        # ⏳ Wait longer (IMPORTANT FIX)
+        for _ in range(40):  # ~40 sec max
+            time.sleep(1)
 
-            except Exception as e:
-                print("Image error:", e)
+            check = requests.get(
+                f"https://stablehorde.net/api/v2/generate/status/{job_id}",
+                timeout=10
+            )
 
-            time.sleep(2)
+            result = check.json()
 
-    return None
+            if result.get("faulted"):
+                print("Generation failed on server")
+                return None
+
+            if result.get("done"):
+                images = result.get("generations", [])
+                if images:
+                    img_url = images[0]["img"]
+                    img_data = requests.get(img_url, timeout=20).content
+                    return img_data
+
+        print("Timeout reached")
+        return None
+
+    except Exception as e:
+        print("Image error:", e)
+        return None
 
 # ==============================
 # ✨ CLEAN OUTPUT

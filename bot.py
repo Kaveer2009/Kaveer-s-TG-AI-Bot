@@ -1,5 +1,5 @@
 # ==============================
-# 🤖 TELEGRAM AI BOT (FINAL WORKING 🔥)
+# 🤖 TELEGRAM AI BOT (FINAL CLEAN 🔥)
 # ==============================
 
 import telebot
@@ -47,37 +47,6 @@ def get_memory(chat_id, user_id):
     return chat_memory[key]
 
 # ==============================
-# 🎨 IMAGE GENERATION (FINAL FIX 🔥)
-# ==============================
-def generate_image(prompt):
-    prompt_encoded = prompt.replace(" ", "%20")
-
-    urls = [
-        f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=512&height=512&seed=1",
-        f"https://image.pollinations.ai/prompt/{prompt_encoded}?model=flux&width=512&height=512"
-    ]
-
-    for url in urls:
-        try:
-            res = requests.get(url, timeout=20)
-
-            if res.status_code == 200 and len(res.content) > 5000:
-                return res.content
-
-        except Exception as e:
-            print("Pollinations error:", e)
-
-    # 🔥 FINAL FALLBACK (always returns image)
-    try:
-        fallback = requests.get("https://picsum.photos/512", timeout=10)
-        if fallback.status_code == 200:
-            return fallback.content
-    except:
-        pass
-
-    return None
-
-# ==============================
 # ✨ CLEAN OUTPUT
 # ==============================
 def clean_text(text):
@@ -86,6 +55,39 @@ def clean_text(text):
     text = re.sub(r"#+\s*", "", text)
     text = re.sub(r"`+", "", text)
     return text
+
+# ==============================
+# 🌐 URL
+# ==============================
+def extract_url(text):
+    urls = re.findall(r'(https?://\S+)', text)
+    return urls[0] if urls else None
+
+def fix_reddit_url(url):
+    if "reddit.com" in url:
+        return url.replace("www.reddit.com", "old.reddit.com")
+    return url
+
+def scrape_website(url):
+    try:
+        url = fix_reddit_url(url)
+
+        headers = {"User-Agent": "Mozilla/5.0"}
+        r = requests.get(url, headers=headers, timeout=10)
+
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        for tag in soup(["script", "style"]):
+            tag.decompose()
+
+        text = soup.get_text(separator="\n")
+        text = "\n".join([l.strip() for l in text.splitlines() if l.strip()])
+
+        return text[:8000]
+
+    except Exception as e:
+        print("Scrape error:", e)
+        return None
 
 # ==============================
 # 🤖 AI
@@ -101,8 +103,13 @@ def ask_ai(prompt, chat_id, user_id):
     memory = get_memory(chat_id, user_id)
 
     messages = [
-        {"role": "system", "content": "Give clean answers."}
-    ] + memory + [{"role": "user", "content": prompt}]
+        {
+            "role": "system",
+            "content": "Give clean, simple answers without markdown symbols. Use '-' for bullet points."
+        }
+    ] + memory + [
+        {"role": "user", "content": prompt}
+    ]
 
     for model in MODELS:
         try:
@@ -129,12 +136,12 @@ def ask_ai(prompt, chat_id, user_id):
             return reply
 
         except Exception as e:
-            print("Model error:", e)
+            print("Model error:", model, e)
 
     return "❌ All models failed."
 
 # ==============================
-# 💬 HANDLER
+# 💬 HANDLER (STRICT 🔥)
 # ==============================
 @bot.message_handler(func=lambda message: True)
 def handle(message):
@@ -147,30 +154,61 @@ def handle(message):
     text = (message.text or message.caption or "").strip()
     text_lower = text.lower()
 
-    # 🎨 IMAGE
-    if text_lower.startswith("generate"):
-        prompt = text[8:].strip()
+    prompt = None
+    context = None
 
-        if not prompt:
-            return bot.reply_to(message, "Give something 😅")
+    # 🧑 PRIVATE CHAT
+    if message.chat.type == "private":
+        prompt = text
 
-        wait = bot.reply_to(message, "🎨 Generating image...")
+    # 🔥 REPLY + TAG ONLY
+    elif (
+        message.reply_to_message
+        and BOT_USERNAME
+        and f"@{BOT_USERNAME}" in text_lower
+    ):
+        reply_msg = message.reply_to_message
 
-        img = generate_image(prompt)
+        context = reply_msg.text or reply_msg.caption or "Unsupported message"
 
-        if img:
-            bot.send_photo(message.chat.id, img)
-            bot.delete_message(message.chat.id, wait.message_id)
-        else:
-            bot.edit_message_text("❌ Failed", message.chat.id, wait.message_id)
+        command = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
 
+        prompt = f"{command}\n\nContext:\n{context}"
+
+    # 🔁 REPLY TO BOT
+    elif (
+        message.reply_to_message
+        and message.reply_to_message.from_user
+        and message.reply_to_message.from_user.id == bot.get_me().id
+    ):
+        prompt = text
+
+    # 📢 TAG ONLY
+    elif BOT_USERNAME and f"@{BOT_USERNAME}" in text_lower:
+        prompt = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
+
+    else:
+        return  # ❌ IGNORE EVERYTHING ELSE
+
+    if not prompt:
         return
 
-    # NORMAL FLOW
-    wait_msg = bot.reply_to(message, "Thinking... 🤔")
+    # 🌐 URL
+    url = extract_url(prompt)
+
+    if url:
+        wait_msg = bot.reply_to(message, "🔎 Reading & analyzing...")
+        content = scrape_website(url)
+
+        if content:
+            prompt = f"Explain this clearly:\n\n{content}"
+        else:
+            prompt = f"Explain this link: {url}"
+    else:
+        wait_msg = bot.reply_to(message, "Thinking... 🤔")
 
     try:
-        reply = ask_ai(text, message.chat.id, message.from_user.id)
+        reply = ask_ai(prompt, message.chat.id, message.from_user.id)
 
         bot.edit_message_text(
             reply[:4000],
@@ -187,13 +225,13 @@ def handle(message):
         )
 
 # ==============================
-# 🚀 START (ANTI-409 LOOP 🔥)
+# 🚀 START (STABLE)
 # ==============================
-print("Bot running...")
+print("Bot is running...")
 
 while True:
     try:
-        bot.infinity_polling(timeout=20, long_polling_timeout=20)
+        bot.infinity_polling(skip_pending=True, timeout=20, long_polling_timeout=20)
     except Exception as e:
         print("Restarting:", e)
         time.sleep(5)

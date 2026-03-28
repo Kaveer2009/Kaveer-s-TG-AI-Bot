@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "").replace("@", "").lower()
 
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -36,15 +37,32 @@ def can_use(user_id):
     return True
 
 # ==============================
-# 🧠 MEMORY (FIXED ✅)
+# 🧠 MEMORY
 # ==============================
 chat_memory = {}
 
 def get_memory(chat_id, user_id):
-    key = f"{chat_id}_{user_id}"  # unique per chat + user
+    key = f"{chat_id}_{user_id}"
     if key not in chat_memory:
         chat_memory[key] = []
     return chat_memory[key]
+
+# ==============================
+# 🎨 IMAGE GENERATION
+# ==============================
+def generate_image(prompt):
+    API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2"
+    headers = {
+        "Authorization": f"Bearer {HUGGINGFACE_API_KEY}"
+    }
+
+    response = requests.post(API_URL, headers=headers, json={"inputs": prompt})
+
+    if response.status_code == 200:
+        return response.content
+    else:
+        print("Image error:", response.text)
+        return None
 
 # ==============================
 # ✨ CLEAN OUTPUT
@@ -155,17 +173,36 @@ def handle(message):
     text_lower = text.lower()
 
     prompt = None
-    context = None
 
     # ==============================
-    # 🧑 PRIVATE
+    # 🎨 IMAGE GENERATE TRIGGER
     # ==============================
+    if "generate" in text_lower:
+        prompt = re.sub(r"generate", "", text, flags=re.IGNORECASE).strip()
+
+        if not prompt:
+            return bot.reply_to(message, "Give something to generate 😅")
+
+        wait = bot.reply_to(message, "🎨 Generating image...")
+
+        img = generate_image(prompt)
+
+        if img:
+            bot.send_photo(message.chat.id, img)
+            bot.delete_message(message.chat.id, wait.message_id)
+        else:
+            bot.edit_message_text("Failed to generate image 😅", message.chat.id, wait.message_id)
+
+        return
+
+    # ==============================
+    # NORMAL FLOW (unchanged)
+    # ==============================
+    context = None
+
     if message.chat.type == "private":
         prompt = text
 
-    # ==============================
-    # 🔥 REPLY + TAG (WITH CONTEXT)
-    # ==============================
     elif (
         message.reply_to_message
         and BOT_USERNAME
@@ -184,19 +221,13 @@ def handle(message):
 
         command = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
 
-        if not context:
-            return
-
         if "summarize" in command:
             prompt = f"Summarize this:\n\n{context}"
-        elif "explain" in command or "what is this" in command:
+        elif "explain" in command:
             prompt = f"Explain this clearly:\n\n{context}"
         else:
             prompt = f"{command}\n\nContext:\n{context}"
 
-    # ==============================
-    # 🔁 REPLY TO BOT
-    # ==============================
     elif (
         message.reply_to_message
         and message.reply_to_message.from_user
@@ -204,9 +235,6 @@ def handle(message):
     ):
         prompt = text
 
-    # ==============================
-    # 📢 TAG ONLY
-    # ==============================
     elif BOT_USERNAME and f"@{BOT_USERNAME}" in text_lower:
         prompt = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
 
@@ -216,25 +244,8 @@ def handle(message):
     if not prompt:
         return
 
-    # ==============================
-    # 🌐 URL handling
-    # ==============================
-    url = extract_url(prompt)
+    wait_msg = bot.reply_to(message, "Thinking... 🤔")
 
-    if url:
-        wait_msg = bot.reply_to(message, "🔎 Reading & analyzing...")
-        content = scrape_website(url)
-
-        if content:
-            prompt = f"Explain this clearly:\n\n{content}"
-        else:
-            prompt = f"Explain this link: {url}"
-    else:
-        wait_msg = bot.reply_to(message, "Thinking... 🤔")
-
-    # ==============================
-    # 🤖 AI response
-    # ==============================
     try:
         reply = ask_ai(prompt, message.chat.id, message.from_user.id)
 

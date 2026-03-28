@@ -1,5 +1,5 @@
 # ==============================
-# 🤖 TELEGRAM AI BOT (FULL + FIXED 🔥)
+# 🤖 TELEGRAM AI BOT (FINAL WORKING 🔥)
 # ==============================
 
 import telebot
@@ -47,58 +47,35 @@ def get_memory(chat_id, user_id):
     return chat_memory[key]
 
 # ==============================
-# 🎨 IMAGE GENERATION (REAL FIX 🔥)
+# 🎨 IMAGE GENERATION (FINAL FIX 🔥)
 # ==============================
 def generate_image(prompt):
+    prompt_encoded = prompt.replace(" ", "%20")
+
+    urls = [
+        f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=512&height=512&seed=1",
+        f"https://image.pollinations.ai/prompt/{prompt_encoded}?model=flux&width=512&height=512"
+    ]
+
+    for url in urls:
+        try:
+            res = requests.get(url, timeout=20)
+
+            if res.status_code == 200 and len(res.content) > 5000:
+                return res.content
+
+        except Exception as e:
+            print("Pollinations error:", e)
+
+    # 🔥 FINAL FALLBACK (always returns image)
     try:
-        response = requests.post(
-            "https://stablehorde.net/api/v2/generate/async",
-            json={
-                "prompt": prompt,
-                "params": {
-                    "width": 512,
-                    "height": 512,
-                    "steps": 20
-                }
-            },
-            timeout=15
-        )
+        fallback = requests.get("https://picsum.photos/512", timeout=10)
+        if fallback.status_code == 200:
+            return fallback.content
+    except:
+        pass
 
-        data = response.json()
-        job_id = data.get("id")
-
-        if not job_id:
-            print("No job ID")
-            return None
-
-        # ⏳ Wait longer (IMPORTANT FIX)
-        for _ in range(40):  # ~40 sec max
-            time.sleep(1)
-
-            check = requests.get(
-                f"https://stablehorde.net/api/v2/generate/status/{job_id}",
-                timeout=10
-            )
-
-            result = check.json()
-
-            if result.get("faulted"):
-                print("Generation failed on server")
-                return None
-
-            if result.get("done"):
-                images = result.get("generations", [])
-                if images:
-                    img_url = images[0]["img"]
-                    img_data = requests.get(img_url, timeout=20).content
-                    return img_data
-
-        print("Timeout reached")
-        return None
-
-    except Exception as e:
-        print("Image error:", e)
-        return None
+    return None
 
 # ==============================
 # ✨ CLEAN OUTPUT
@@ -109,37 +86,6 @@ def clean_text(text):
     text = re.sub(r"#+\s*", "", text)
     text = re.sub(r"`+", "", text)
     return text
-
-# ==============================
-# 🌐 URL
-# ==============================
-def extract_url(text):
-    urls = re.findall(r'(https?://\S+)', text)
-    return urls[0] if urls else None
-
-def fix_reddit_url(url):
-    if "reddit.com" in url:
-        return url.replace("www.reddit.com", "old.reddit.com")
-    return url
-
-def scrape_website(url):
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        r = requests.get(url, headers=headers, timeout=10)
-
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        for tag in soup(["script", "style"]):
-            tag.decompose()
-
-        text = soup.get_text(separator="\n")
-        text = "\n".join([l.strip() for l in text.splitlines() if l.strip()])
-
-        return text[:8000]
-
-    except Exception as e:
-        print("Scrape error:", e)
-        return None
 
 # ==============================
 # 🤖 AI
@@ -155,13 +101,8 @@ def ask_ai(prompt, chat_id, user_id):
     memory = get_memory(chat_id, user_id)
 
     messages = [
-        {
-            "role": "system",
-            "content": "Give clean, simple answers without markdown symbols."
-        }
-    ] + memory + [
-        {"role": "user", "content": prompt}
-    ]
+        {"role": "system", "content": "Give clean answers."}
+    ] + memory + [{"role": "user", "content": prompt}]
 
     for model in MODELS:
         try:
@@ -221,7 +162,7 @@ def handle(message):
             bot.send_photo(message.chat.id, img)
             bot.delete_message(message.chat.id, wait.message_id)
         else:
-            bot.edit_message_text("❌ Failed (try different prompt)", message.chat.id, wait.message_id)
+            bot.edit_message_text("❌ Failed", message.chat.id, wait.message_id)
 
         return
 

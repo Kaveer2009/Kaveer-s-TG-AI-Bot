@@ -47,22 +47,26 @@ def get_memory(chat_id, user_id):
     return chat_memory[key]
 
 # ==============================
-# 🎨 IMAGE GENERATION (WORKING 🔥)
+# 🎨 IMAGE GENERATION (RETRY + FIX 🔥)
 # ==============================
 def generate_image(prompt):
-    try:
-        url = f"https://image.pollinations.ai/prompt/{prompt.replace(' ', '%20')}"
-        response = requests.get(url, timeout=60)
+    url = f"https://image.pollinations.ai/prompt/{prompt.replace(' ', '%20')}"
 
-        if response.status_code == 200:
-            return response.content
-        else:
-            print("Image error:", response.status_code)
-            return None
+    for i in range(3):  # retry 3 times
+        try:
+            response = requests.get(url, timeout=40)
 
-    except Exception as e:
-        print("Error:", e)
-        return None
+            if response.status_code == 200 and len(response.content) > 1000:
+                return response.content
+
+            print(f"Retry {i+1} failed:", response.status_code)
+
+        except Exception as e:
+            print(f"Retry {i+1} error:", e)
+
+        time.sleep(2)
+
+    return None
 
 # ==============================
 # ✨ CLEAN OUTPUT
@@ -88,8 +92,6 @@ def fix_reddit_url(url):
 
 def scrape_website(url):
     try:
-        url = fix_reddit_url(url)
-
         headers = {"User-Agent": "Mozilla/5.0"}
         r = requests.get(url, headers=headers, timeout=10)
 
@@ -121,166 +123,74 @@ def ask_ai(prompt, chat_id, user_id):
     memory = get_memory(chat_id, user_id)
 
     messages = [
-        {
-            "role": "system",
-            "content": "Give clean, simple answers without markdown symbols. Use '-' for bullet points."
-        }
-    ] + memory + [
-        {"role": "user", "content": prompt}
-    ]
+        {"role": "system", "content": "Give clean, simple answers."}
+    ] + memory + [{"role": "user", "content": prompt}]
 
-    for model in MODELS:
-        try:
-            response = requests.post(
-                url,
-                headers=headers,
-                json={"model": model, "messages": messages},
-                timeout=30
-            )
+    try:
+        response = requests.post(url, headers=headers, json={
+            "model": MODELS[0],
+            "messages": messages
+        }, timeout=30)
 
-            if response.status_code != 200:
-                continue
+        reply = response.json()["choices"][0]["message"]["content"]
+        reply = clean_text(reply)
 
-            reply = response.json()["choices"][0]["message"]["content"]
-            reply = clean_text(reply)
+        memory.append({"role": "user", "content": prompt})
+        memory.append({"role": "assistant", "content": reply})
 
-            memory.append({"role": "user", "content": prompt})
-            memory.append({"role": "assistant", "content": reply})
+        return reply
 
-            if len(memory) > 6:
-                memory.pop(0)
-                memory.pop(0)
-
-            return reply
-
-        except Exception as e:
-            print("Model error:", model, e)
-
-    return "❌ All models failed."
+    except Exception as e:
+        print("AI error:", e)
+        return "Error 😅 Try again."
 
 # ==============================
 # 💬 HANDLER
 # ==============================
 @bot.message_handler(func=lambda message: True)
 def handle(message):
-    if not message.text and not message.caption:
+    if not message.text:
         return
 
     if not can_use(message.from_user.id):
         return
 
-    text = (message.text or message.caption or "").strip()
-    text_lower = text.lower()
+    text = message.text.strip()
 
-    # ==============================
-    # 🎨 IMAGE GENERATION TRIGGER
-    # ==============================
-    if "generate" in text_lower:
-        prompt = re.sub(r"generate", "", text, flags=re.IGNORECASE).strip()
+    # 🎨 IMAGE
+    if text.lower().startswith("generate"):
+        prompt = text[8:].strip()
 
         if not prompt:
-            return bot.reply_to(message, "Give something to generate 😅")
+            return bot.reply_to(message, "Give something 😅")
 
-        wait = bot.reply_to(message, "🎨 Generating image...")
+        msg = bot.reply_to(message, "🎨 Generating...")
 
         img = generate_image(prompt)
 
         if img:
             bot.send_photo(message.chat.id, img)
-            bot.delete_message(message.chat.id, wait.message_id)
+            bot.delete_message(message.chat.id, msg.message_id)
         else:
-            bot.edit_message_text("Failed to generate image 😅", message.chat.id, wait.message_id)
+            bot.edit_message_text("Failed 😅 Try again.", message.chat.id, msg.message_id)
 
         return
 
-    # ==============================
-    # NORMAL FLOW
-    # ==============================
-    prompt = None
-    context = None
+    # 🤖 TEXT
+    msg = bot.reply_to(message, "Thinking... 🤔")
 
-    if message.chat.type == "private":
-        prompt = text
+    reply = ask_ai(text, message.chat.id, message.from_user.id)
 
-    elif (
-        message.reply_to_message
-        and BOT_USERNAME
-        and f"@{BOT_USERNAME}" in text_lower
-    ):
-        reply_msg = message.reply_to_message
+    bot.edit_message_text(reply[:4000], msg.chat.id, msg.message_id)
 
-        if reply_msg.text:
-            context = reply_msg.text
-        elif reply_msg.caption:
-            context = reply_msg.caption
-        elif reply_msg.photo:
-            context = "User sent an image."
-        else:
-            context = "Unsupported message type."
+# ==============================
+# 🚀 START (AUTO-RECOVERY 🔥)
+# ==============================
+print("Bot running...")
 
-        command = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
-
-        if "summarize" in command:
-            prompt = f"Summarize this:\n\n{context}"
-        elif "explain" in command or "what is this" in command:
-            prompt = f"Explain this clearly:\n\n{context}"
-        else:
-            prompt = f"{command}\n\nContext:\n{context}"
-
-    elif (
-        message.reply_to_message
-        and message.reply_to_message.from_user
-        and message.reply_to_message.from_user.id == bot.get_me().id
-    ):
-        prompt = text
-
-    elif BOT_USERNAME and f"@{BOT_USERNAME}" in text_lower:
-        prompt = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
-
-    else:
-        return
-
-    if not prompt:
-        return
-
-    # URL handling
-    url = extract_url(prompt)
-
-    if url:
-        wait_msg = bot.reply_to(message, "🔎 Reading & analyzing...")
-        content = scrape_website(url)
-
-        if content:
-            prompt = f"Explain this clearly:\n\n{content}"
-        else:
-            prompt = f"Explain this link: {url}"
-    else:
-        wait_msg = bot.reply_to(message, "Thinking... 🤔")
-
+while True:
     try:
-        reply = ask_ai(prompt, message.chat.id, message.from_user.id)
-
-        bot.edit_message_text(
-            reply[:4000],
-            chat_id=wait_msg.chat.id,
-            message_id=wait_msg.message_id
-        )
-
+        bot.infinity_polling(timeout=20, long_polling_timeout=20)
     except Exception as e:
-        print("Error:", e)
-        bot.edit_message_text(
-            "Error 😅 Try again.",
-            chat_id=wait_msg.chat.id,
-            message_id=wait_msg.message_id
-        )
-
-# ==============================
-# 🚀 START (FINAL FIX 🔥)
-# ==============================
-print("Bot is running...")
-
-bot.infinity_polling(
-    skip_pending=True,
-    timeout=20,
-    long_polling_timeout=20
-)
+        print("Restarting due to:", e)
+        time.sleep(5)

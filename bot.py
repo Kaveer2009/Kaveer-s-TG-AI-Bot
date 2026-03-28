@@ -48,21 +48,34 @@ def get_memory(chat_id, user_id):
     return chat_memory[key]
 
 # ==============================
-# 🎨 IMAGE GENERATION
+# 🎨 IMAGE GENERATION (FIXED 🔥)
 # ==============================
 def generate_image(prompt):
-    API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2"
+    API_URL = "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5"
     headers = {
         "Authorization": f"Bearer {HUGGINGFACE_API_KEY}"
     }
 
-    response = requests.post(API_URL, headers=headers, json={"inputs": prompt})
+    for _ in range(3):  # retry system
+        try:
+            response = requests.post(API_URL, headers=headers, json={"inputs": prompt}, timeout=60)
 
-    if response.status_code == 200:
-        return response.content
-    else:
-        print("Image error:", response.text)
-        return None
+            if response.status_code == 200:
+                return response.content
+
+            elif response.status_code == 503:
+                print("Model loading... retrying")
+                time.sleep(5)
+
+            else:
+                print("Image error:", response.text)
+                return None
+
+        except Exception as e:
+            print("Request error:", e)
+            time.sleep(3)
+
+    return None
 
 # ==============================
 # ✨ CLEAN OUTPUT
@@ -172,10 +185,8 @@ def handle(message):
     text = (message.text or message.caption or "").strip()
     text_lower = text.lower()
 
-    prompt = None
-
     # ==============================
-    # 🎨 IMAGE GENERATE TRIGGER
+    # 🎨 IMAGE GENERATION TRIGGER
     # ==============================
     if "generate" in text_lower:
         prompt = re.sub(r"generate", "", text, flags=re.IGNORECASE).strip()
@@ -196,8 +207,9 @@ def handle(message):
         return
 
     # ==============================
-    # NORMAL FLOW (unchanged)
+    # NORMAL FLOW
     # ==============================
+    prompt = None
     context = None
 
     if message.chat.type == "private":
@@ -223,7 +235,7 @@ def handle(message):
 
         if "summarize" in command:
             prompt = f"Summarize this:\n\n{context}"
-        elif "explain" in command:
+        elif "explain" in command or "what is this" in command:
             prompt = f"Explain this clearly:\n\n{context}"
         else:
             prompt = f"{command}\n\nContext:\n{context}"
@@ -244,7 +256,19 @@ def handle(message):
     if not prompt:
         return
 
-    wait_msg = bot.reply_to(message, "Thinking... 🤔")
+    # URL handling
+    url = extract_url(prompt)
+
+    if url:
+        wait_msg = bot.reply_to(message, "🔎 Reading & analyzing...")
+        content = scrape_website(url)
+
+        if content:
+            prompt = f"Explain this clearly:\n\n{content}"
+        else:
+            prompt = f"Explain this link: {url}"
+    else:
+        wait_msg = bot.reply_to(message, "Thinking... 🤔")
 
     try:
         reply = ask_ai(prompt, message.chat.id, message.from_user.id)

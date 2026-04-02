@@ -9,8 +9,6 @@ import time
 import re
 from bs4 import BeautifulSoup
 from io import BytesIO
-import json
-import base64
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -50,7 +48,7 @@ def get_memory(chat_id, user_id):
     return chat_memory[key]
 
 # ==============================
-# 📚 CUSTOM KNOWLEDGE
+# 📚 CUSTOM KNOWLEDGE (UPGRADED 🔥)
 # ==============================
 CUSTOM_KNOWLEDGE = [
     {
@@ -60,111 +58,73 @@ CUSTOM_KNOWLEDGE = [
             "kisne banaya tumhe"
         ],
         "answer": "I was made by Kaveer 🚀"
+    },
+    {
+        "keywords": [
+            "what are you", "what can you do", "what is this bot"
+        ],
+        "answer": "I’m an AI assistant bot that can answer questions and help you 🤖"
+    },
+    {
+        "keywords": [
+            "best rom", "best custom rom", "which rom should i use"
+        ],
+        "answer": "Matrixx / Evolution X are great choices 🔥"
+    },
+    {
+        "keywords": [
+            "what is htsr", "htsr meaning", "high touch sampling rate"
+        ],
+        "answer": "HTSR improves touch response, especially in gaming 🎮"
+    },
+    {
+        "keywords": [
+            "are you human", "are you real", "do you sleep"
+        ],
+        "answer": "I’m just code… but always online 😏"
     }
 ]
 
-# ==============================
-# 🔥 NORMALIZE
-# ==============================
+# 🔥 normalize + slang fix
 def normalize_text(text):
     text = text.lower()
-    text = f" {text} "
 
     replacements = {
         " u ": " you ",
         " ur ": " your ",
         " r ": " are ",
+        " pls ": " please ",
+        " plz ": " please ",
         " tum ": " you ",
+        " tumhe ": " you ",
         " kya ": " what ",
         " kaun ": " who "
     }
 
+    text = f" {text} "
+
     for k, v in replacements.items():
         text = text.replace(k, v)
 
+    # remove extra symbols
     text = re.sub(r'[^a-z0-9\s]', ' ', text)
     text = re.sub(r'\s+', ' ', text)
 
     return text.strip()
 
-# ==============================
-# 🔐 CONFIG
-# ==============================
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-GITHUB_REPO = os.getenv("GITHUB_REPO")
-GITHUB_FILE = os.getenv("GITHUB_FILE", "knowledge.json")
-GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-
-# ==============================
-# 📦 GITHUB
-# ==============================
-def github_get_file():
-    try:
-        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE}"
-        headers = {"Authorization": f"token {GITHUB_TOKEN}"}
-
-        r = requests.get(url, headers=headers, timeout=10)
-        data = r.json()
-
-        if "content" not in data:
-            return [], None
-
-        content = base64.b64decode(data["content"]).decode()
-        return json.loads(content), data["sha"]
-
-    except:
-        return [], None
-
-def github_update_file(data, sha):
-    try:
-        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE}"
-        headers = {"Authorization": f"token {GITHUB_TOKEN}"}
-
-        encoded = base64.b64encode(json.dumps(data, indent=4).encode()).decode()
-
-        requests.put(url, headers=headers, json={
-            "message": "Update knowledge",
-            "content": encoded,
-            "sha": sha,
-            "branch": GITHUB_BRANCH
-        })
-    except:
-        pass
-
-# ==============================
-# ⚡ CACHE
-# ==============================
-knowledge_cache = []
-last_fetch = 0
-
-def get_all_knowledge():
-    global knowledge_cache, last_fetch
-
-    if time.time() - last_fetch < 10 and knowledge_cache:
-        return CUSTOM_KNOWLEDGE + knowledge_cache
-
-    data, _ = github_get_file()
-
-    if data:
-        knowledge_cache = data
-        last_fetch = time.time()
-
-    return CUSTOM_KNOWLEDGE + knowledge_cache
-
-# ==============================
-# 🧠 MATCH
-# ==============================
+# 🔥 fuzzy match logic
 def check_custom_knowledge(prompt):
     prompt = normalize_text(prompt)
 
-    for item in get_all_knowledge():
+    for item in CUSTOM_KNOWLEDGE:
         for keyword in item["keywords"]:
             keyword = normalize_text(keyword)
 
+            # exact contains
             if keyword in prompt:
                 return item["answer"]
 
+            # fuzzy word match (order independent)
             words = keyword.split()
             if sum(1 for w in words if w in prompt) >= max(1, len(words) - 1):
                 return item["answer"]
@@ -172,46 +132,14 @@ def check_custom_knowledge(prompt):
     return None
 
 # ==============================
-# ➕ ADD GUIDE
+# ✨ CLEAN OUTPUT
 # ==============================
-user_states = {}
-temp_data = {}
-
-@bot.message_handler(commands=['addguide'])
-def add_guide_start(message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    user_states[message.from_user.id] = "keywords"
-    bot.reply_to(message, "Send keywords (comma separated)")
-
-@bot.message_handler(func=lambda m: user_states.get(m.from_user.id) == "keywords")
-def add_keywords(message):
-    user_states[message.from_user.id] = "answer"
-
-    keywords = [k.strip().lower() for k in message.text.split(",")]
-    temp_data[message.from_user.id] = {"keywords": keywords}
-
-    bot.reply_to(message, "Now send the answer")
-
-@bot.message_handler(func=lambda m: user_states.get(m.from_user.id) == "answer")
-def add_answer(message):
-    user_states.pop(message.from_user.id, None)
-
-    answer = message.text
-    data_entry = temp_data.pop(message.from_user.id)
-    data_entry["answer"] = answer
-
-    data, sha = github_get_file()
-
-    if sha is None:
-        bot.reply_to(message, "❌ GitHub error. Try again.")
-        return
-
-    data.append(data_entry)
-    github_update_file(data, sha)
-
-    bot.reply_to(message, "✅ Guide saved to GitHub!")
+def clean_text(text):
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = re.sub(r"\*(.*?)\*", r"\1", text)
+    text = re.sub(r"#+\s*", "", text)
+    text = re.sub(r"`+", "", text)
+    return text
 
 # ==============================
 # 🌐 URL
@@ -228,22 +156,26 @@ def fix_reddit_url(url):
 def scrape_website(url):
     try:
         url = fix_reddit_url(url)
+
         headers = {"User-Agent": "Mozilla/5.0"}
         r = requests.get(url, headers=headers, timeout=10)
 
         soup = BeautifulSoup(r.text, "html.parser")
+
         for tag in soup(["script", "style"]):
             tag.decompose()
 
         text = soup.get_text(separator="\n")
         text = "\n".join([l.strip() for l in text.splitlines() if l.strip()])
+
         return text[:8000]
 
-    except:
+    except Exception as e:
+        print("Scrape error:", e)
         return None
 
 # ==============================
-# 🤖 AI
+# 🤖 AI (UNCHANGED)
 # ==============================
 def ask_ai(prompt, chat_id, user_id):
     url = "https://openrouter.ai/api/v1/chat/completions"
@@ -256,57 +188,215 @@ def ask_ai(prompt, chat_id, user_id):
     memory = get_memory(chat_id, user_id)
 
     messages = [
-        {"role": "system", "content": "Give clean answers."}
-    ] + memory + [{"role": "user", "content": prompt}]
+        {
+            "role": "system",
+            "content": "Give clean, simple answers without markdown symbols. Use '-' for bullet points."
+        }
+    ] + memory + [
+        {"role": "user", "content": prompt}
+    ]
+
+    last_error = None
 
     for model in MODELS:
-        try:
-            r = requests.post(url, headers=headers, json={"model": model, "messages": messages}, timeout=30)
-            data = r.json()
+        for attempt in range(2):
+            try:
+                response = requests.post(
+                    url,
+                    headers=headers,
+                    json={"model": model, "messages": messages},
+                    timeout=30
+                )
 
-            if "choices" not in data:
-                continue
+                data = response.json()
 
-            reply = data["choices"][0]["message"]["content"]
-            return reply
+                if response.status_code != 200:
+                    print(f"[{model}] HTTP Error:", data)
+                    last_error = data
+                    time.sleep(1)
+                    continue
 
-        except:
-            continue
+                if "choices" not in data:
+                    print(f"[{model}] Invalid response:", data)
+                    last_error = data
+                    time.sleep(1)
+                    continue
 
-    return "❌ AI busy"
+                reply = data["choices"][0]["message"]["content"]
+                reply = clean_text(reply)
+
+                memory.append({"role": "user", "content": prompt})
+                memory.append({"role": "assistant", "content": reply})
+
+                if len(memory) > 6:
+                    memory.pop(0)
+                    memory.pop(0)
+
+                return reply
+
+            except Exception as e:
+                print(f"[{model}] Exception:", e)
+                last_error = str(e)
+                time.sleep(1)
+
+    print("FINAL ERROR:", last_error)
+    return "❌ AI is busy, try again in a few seconds."
 
 # ==============================
-# 💬 HANDLER
+# 🎨 IMAGE GENERATION (UNCHANGED)
+# ==============================
+@bot.message_handler(commands=['image'])
+def generate_image(message):
+    prompt = message.text.replace('/image', '').strip()
+
+    if not prompt:
+        bot.reply_to(message, "Example:\n/image a cute cat 🐱")
+        return
+
+    msg = bot.reply_to(message, "Generating AI image... ⏳")
+
+    try:
+        response = requests.post(
+            "https://stablehorde.net/api/v2/generate/async",
+            json={
+                "prompt": prompt,
+                "params": {
+                    "width": 512,
+                    "height": 512,
+                    "steps": 20
+                }
+            },
+            headers={"apikey": "0000000000"},
+            timeout=30
+        ).json()
+
+        request_id = response.get("id")
+        if not request_id:
+            bot.reply_to(message, "❌ Failed to start image generation")
+            return
+
+        image_url = None
+        for _ in range(15):
+            check = requests.get(
+                f"https://stablehorde.net/api/v2/generate/status/{request_id}",
+                timeout=20
+            ).json()
+
+            if check.get("done"):
+                gens = check.get("generations")
+                if gens:
+                    image_url = gens[0]["img"]
+                    break
+
+            time.sleep(3)
+
+        if not image_url:
+            bot.reply_to(message, "⏳ Took too long, try again")
+        else:
+            img_data = requests.get(image_url).content
+            bot.send_photo(
+                message.chat.id,
+                BytesIO(img_data),
+                caption=f"🎨 Prompt: {prompt}"
+            )
+
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
+
+    try:
+        bot.delete_message(message.chat.id, msg.message_id)
+    except:
+        pass
+
+# ==============================
+# 💬 HANDLER (ONLY SMALL ADD)
 # ==============================
 @bot.message_handler(func=lambda message: True)
 def handle(message):
-    if not message.text:
+    if not message.text and not message.caption:
         return
 
     if not can_use(message.from_user.id):
         return
 
-    text = message.text.strip()
+    text = (message.text or message.caption or "").strip()
+    text_lower = text.lower()
 
-    custom_reply = check_custom_knowledge(text)
-    if custom_reply:
-        bot.reply_to(message, custom_reply)
+    prompt = None
+    context = None
+
+    if message.chat.type == "private":
+        prompt = text
+
+    elif (
+        message.reply_to_message
+        and BOT_USERNAME
+        and f"@{BOT_USERNAME}" in text_lower
+    ):
+        reply_msg = message.reply_to_message
+        context = reply_msg.text or reply_msg.caption or "Unsupported message"
+        command = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
+        prompt = f"{command}\n\nContext:\n{context}"
+
+    elif (
+        message.reply_to_message
+        and message.reply_to_message.from_user
+        and message.reply_to_message.from_user.id == bot.get_me().id
+    ):
+        prompt = text
+
+    elif BOT_USERNAME and f"@{BOT_USERNAME}" in text_lower:
+        prompt = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
+
+    else:
         return
 
-    msg = bot.reply_to(message, "Thinking... 🤔")
+    if not prompt:
+        return
 
-    reply = ask_ai(text, message.chat.id, message.from_user.id)
+    url = extract_url(prompt)
 
-    bot.edit_message_text(reply[:4000], msg.chat.id, msg.message_id)
+    if url:
+        wait_msg = bot.reply_to(message, "🔎 Reading & analyzing...")
+        content = scrape_website(url)
+
+        if content:
+            prompt = f"Explain this clearly:\n\n{content}"
+        else:
+            prompt = f"Explain this link: {url}"
+    else:
+        wait_msg = bot.reply_to(message, "Thinking... 🤔")
+
+    try:
+        custom_reply = check_custom_knowledge(prompt)
+
+        if custom_reply:
+            reply = custom_reply
+        else:
+            reply = ask_ai(prompt, message.chat.id, message.from_user.id)
+
+        bot.edit_message_text(
+            reply[:4000],
+            chat_id=wait_msg.chat.id,
+            message_id=wait_msg.message_id
+        )
+
+    except Exception as e:
+        print("Error:", e)
+        bot.edit_message_text(
+            "Error 😅 Try again.",
+            chat_id=wait_msg.chat.id,
+            message_id=wait_msg.message_id
+        )
 
 # ==============================
-# 🚀 START
+# 🚀 START (STABLE)
 # ==============================
-print("Bot running...")
+print("Bot is running...")
 
 while True:
     try:
-        bot.infinity_polling(skip_pending=True)
+        bot.infinity_polling(skip_pending=True, timeout=20, long_polling_timeout=20)
     except Exception as e:
         print("Restarting:", e)
         time.sleep(5)

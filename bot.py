@@ -85,7 +85,9 @@ CUSTOM_KNOWLEDGE = [
     }
 ]
 
-# 🔥 normalize + slang fix
+# ==============================
+# 🔥 NORMALIZE
+# ==============================
 def normalize_text(text):
     text = text.lower()
 
@@ -106,13 +108,14 @@ def normalize_text(text):
     for k, v in replacements.items():
         text = text.replace(k, v)
 
-    # remove extra symbols
     text = re.sub(r'[^a-z0-9\s]', ' ', text)
     text = re.sub(r'\s+', ' ', text)
 
     return text.strip()
 
-# 🔥 fuzzy match logic
+# ==============================
+# 🧠 MATCH
+# ==============================
 def check_custom_knowledge(prompt):
     prompt = normalize_text(prompt)
 
@@ -120,11 +123,9 @@ def check_custom_knowledge(prompt):
         for keyword in item["keywords"]:
             keyword = normalize_text(keyword)
 
-            # exact contains
             if keyword in prompt:
                 return item["answer"]
 
-            # fuzzy word match (order independent)
             words = keyword.split()
             if sum(1 for w in words if w in prompt) >= max(1, len(words) - 1):
                 return item["answer"]
@@ -175,7 +176,7 @@ def scrape_website(url):
         return None
 
 # ==============================
-# 🤖 AI (UNCHANGED)
+# 🤖 AI
 # ==============================
 def ask_ai(prompt, chat_id, user_id):
     url = "https://openrouter.ai/api/v1/chat/completions"
@@ -196,54 +197,24 @@ def ask_ai(prompt, chat_id, user_id):
         {"role": "user", "content": prompt}
     ]
 
-    last_error = None
-
     for model in MODELS:
-        for attempt in range(2):
-            try:
-                response = requests.post(
-                    url,
-                    headers=headers,
-                    json={"model": model, "messages": messages},
-                    timeout=30
-                )
+        try:
+            response = requests.post(url, headers=headers, json={"model": model, "messages": messages}, timeout=30)
+            data = response.json()
 
-                data = response.json()
+            if "choices" not in data:
+                continue
 
-                if response.status_code != 200:
-                    print(f"[{model}] HTTP Error:", data)
-                    last_error = data
-                    time.sleep(1)
-                    continue
+            reply = clean_text(data["choices"][0]["message"]["content"])
+            return reply
 
-                if "choices" not in data:
-                    print(f"[{model}] Invalid response:", data)
-                    last_error = data
-                    time.sleep(1)
-                    continue
+        except:
+            continue
 
-                reply = data["choices"][0]["message"]["content"]
-                reply = clean_text(reply)
-
-                memory.append({"role": "user", "content": prompt})
-                memory.append({"role": "assistant", "content": reply})
-
-                if len(memory) > 6:
-                    memory.pop(0)
-                    memory.pop(0)
-
-                return reply
-
-            except Exception as e:
-                print(f"[{model}] Exception:", e)
-                last_error = str(e)
-                time.sleep(1)
-
-    print("FINAL ERROR:", last_error)
-    return "❌ AI is busy, try again in a few seconds."
+    return "❌ AI is busy, try again."
 
 # ==============================
-# 🎨 IMAGE GENERATION (UNCHANGED)
+# 🎨 IMAGE
 # ==============================
 @bot.message_handler(commands=['image'])
 def generate_image(message):
@@ -258,58 +229,30 @@ def generate_image(message):
     try:
         response = requests.post(
             "https://stablehorde.net/api/v2/generate/async",
-            json={
-                "prompt": prompt,
-                "params": {
-                    "width": 512,
-                    "height": 512,
-                    "steps": 20
-                }
-            },
-            headers={"apikey": "0000000000"},
-            timeout=30
+            json={"prompt": prompt},
+            headers={"apikey": "0000000000"}
         ).json()
 
         request_id = response.get("id")
-        if not request_id:
-            bot.reply_to(message, "❌ Failed to start image generation")
-            return
 
-        image_url = None
-        for _ in range(15):
-            check = requests.get(
-                f"https://stablehorde.net/api/v2/generate/status/{request_id}",
-                timeout=20
-            ).json()
+        for _ in range(10):
+            check = requests.get(f"https://stablehorde.net/api/v2/generate/status/{request_id}").json()
 
             if check.get("done"):
-                gens = check.get("generations")
-                if gens:
-                    image_url = gens[0]["img"]
-                    break
+                img_url = check["generations"][0]["img"]
+                img = requests.get(img_url).content
+                bot.send_photo(message.chat.id, BytesIO(img))
+                break
 
-            time.sleep(3)
-
-        if not image_url:
-            bot.reply_to(message, "⏳ Took too long, try again")
-        else:
-            img_data = requests.get(image_url).content
-            bot.send_photo(
-                message.chat.id,
-                BytesIO(img_data),
-                caption=f"🎨 Prompt: {prompt}"
-            )
+            time.sleep(2)
 
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
 
-    try:
-        bot.delete_message(message.chat.id, msg.message_id)
-    except:
-        pass
+    bot.delete_message(message.chat.id, msg.message_id)
 
 # ==============================
-# 💬 HANDLER (ONLY SMALL ADD)
+# 💬 HANDLER
 # ==============================
 @bot.message_handler(func=lambda message: True)
 def handle(message):
@@ -323,27 +266,15 @@ def handle(message):
     text_lower = text.lower()
 
     prompt = None
-    context = None
 
     if message.chat.type == "private":
         prompt = text
 
-    elif (
-        message.reply_to_message
-        and BOT_USERNAME
-        and f"@{BOT_USERNAME}" in text_lower
-    ):
+    elif message.reply_to_message and BOT_USERNAME and f"@{BOT_USERNAME}" in text_lower:
         reply_msg = message.reply_to_message
         context = reply_msg.text or reply_msg.caption or "Unsupported message"
         command = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
         prompt = f"{command}\n\nContext:\n{context}"
-
-    elif (
-        message.reply_to_message
-        and message.reply_to_message.from_user
-        and message.reply_to_message.from_user.id == bot.get_me().id
-    ):
-        prompt = text
 
     elif BOT_USERNAME and f"@{BOT_USERNAME}" in text_lower:
         prompt = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
@@ -351,52 +282,38 @@ def handle(message):
     else:
         return
 
-    if not prompt:
-        return
-
-    url = extract_url(prompt)
-
-    if url:
-        wait_msg = bot.reply_to(message, "🔎 Reading & analyzing...")
-        content = scrape_website(url)
-
-        if content:
-            prompt = f"Explain this clearly:\n\n{content}"
-        else:
-            prompt = f"Explain this link: {url}"
-    else:
-        wait_msg = bot.reply_to(message, "Thinking... 🤔")
+    wait_msg = bot.reply_to(message, "Thinking... 🤔")
 
     try:
-        custom_reply = check_custom_knowledge(prompt)
+        is_media_reply = (
+            message.reply_to_message and
+            not (message.reply_to_message.text or message.reply_to_message.caption)
+        )
+
+        if not is_media_reply:
+            custom_reply = check_custom_knowledge(prompt)
+        else:
+            custom_reply = None
 
         if custom_reply:
             reply = custom_reply
         else:
             reply = ask_ai(prompt, message.chat.id, message.from_user.id)
 
-        bot.edit_message_text(
-            reply[:4000],
-            chat_id=wait_msg.chat.id,
-            message_id=wait_msg.message_id
-        )
+        bot.edit_message_text(reply[:4000], wait_msg.chat.id, wait_msg.message_id)
 
     except Exception as e:
         print("Error:", e)
-        bot.edit_message_text(
-            "Error 😅 Try again.",
-            chat_id=wait_msg.chat.id,
-            message_id=wait_msg.message_id
-        )
+        bot.edit_message_text("Error 😅 Try again.", wait_msg.chat.id, wait_msg.message_id)
 
 # ==============================
-# 🚀 START (STABLE)
+# 🚀 START
 # ==============================
 print("Bot is running...")
 
 while True:
     try:
-        bot.infinity_polling(skip_pending=True, timeout=20, long_polling_timeout=20)
+        bot.infinity_polling(skip_pending=True)
     except Exception as e:
         print("Restarting:", e)
         time.sleep(5)

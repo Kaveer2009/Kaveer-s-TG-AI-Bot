@@ -91,7 +91,7 @@ def scrape_website(url):
         return None
 
 # ==============================
-# 🤖 AI
+# 🤖 AI (FIXED 🔥)
 # ==============================
 def ask_ai(prompt, chat_id, user_id):
     url = "https://openrouter.ai/api/v1/chat/completions"
@@ -112,34 +112,51 @@ def ask_ai(prompt, chat_id, user_id):
         {"role": "user", "content": prompt}
     ]
 
+    last_error = None
+
     for model in MODELS:
-        try:
-            response = requests.post(
-                url,
-                headers=headers,
-                json={"model": model, "messages": messages},
-                timeout=30
-            )
+        for attempt in range(2):
+            try:
+                response = requests.post(
+                    url,
+                    headers=headers,
+                    json={"model": model, "messages": messages},
+                    timeout=30
+                )
 
-            if response.status_code != 200:
-                continue
+                data = response.json()
 
-            reply = response.json()["choices"][0]["message"]["content"]
-            reply = clean_text(reply)
+                if response.status_code != 200:
+                    print(f"[{model}] HTTP Error:", data)
+                    last_error = data
+                    time.sleep(1)
+                    continue
 
-            memory.append({"role": "user", "content": prompt})
-            memory.append({"role": "assistant", "content": reply})
+                if "choices" not in data:
+                    print(f"[{model}] Invalid response:", data)
+                    last_error = data
+                    time.sleep(1)
+                    continue
 
-            if len(memory) > 6:
-                memory.pop(0)
-                memory.pop(0)
+                reply = data["choices"][0]["message"]["content"]
+                reply = clean_text(reply)
 
-            return reply
+                memory.append({"role": "user", "content": prompt})
+                memory.append({"role": "assistant", "content": reply})
 
-        except Exception as e:
-            print("Model error:", model, e)
+                if len(memory) > 6:
+                    memory.pop(0)
+                    memory.pop(0)
 
-    return "❌ All models failed."
+                return reply
+
+            except Exception as e:
+                print(f"[{model}] Exception:", e)
+                last_error = str(e)
+                time.sleep(1)
+
+    print("FINAL ERROR:", last_error)
+    return "❌ AI is busy, try again in a few seconds."
 
 # ==============================
 # 🎨 IMAGE GENERATION

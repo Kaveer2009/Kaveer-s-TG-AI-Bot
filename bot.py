@@ -48,6 +48,53 @@ def get_memory(chat_id, user_id):
     return chat_memory[key]
 
 # ==============================
+# 📚 CUSTOM KNOWLEDGE (NEW 🔥)
+# ==============================
+CUSTOM_KNOWLEDGE = [
+    {
+        "keywords": [
+            "who made you", "who created you", "who developed you",
+            "who owns you", "who is your creator", "kisne banaya"
+        ],
+        "answer": "I was made by Kaveer 🚀"
+    },
+    {
+        "keywords": [
+            "what are you", "what can you do", "what is this bot"
+        ],
+        "answer": "I’m an AI assistant bot that can answer questions and help you 🤖"
+    },
+    {
+        "keywords": [
+            "best rom", "best custom rom", "which rom should i use"
+        ],
+        "answer": "Matrixx / Evolution X are great choices 🔥"
+    },
+    {
+        "keywords": [
+            "what is htsr", "htsr meaning", "high touch sampling rate"
+        ],
+        "answer": "HTSR improves touch response, especially in gaming 🎮"
+    },
+    {
+        "keywords": [
+            "are you human", "are you real", "do you sleep"
+        ],
+        "answer": "I’m just code… but always online 😏"
+    }
+]
+
+def check_custom_knowledge(prompt):
+    prompt = prompt.lower()
+
+    for item in CUSTOM_KNOWLEDGE:
+        for keyword in item["keywords"]:
+            if keyword in prompt:
+                return item["answer"]
+
+    return None
+
+# ==============================
 # ✨ CLEAN OUTPUT
 # ==============================
 def clean_text(text):
@@ -284,7 +331,13 @@ def handle(message):
         wait_msg = bot.reply_to(message, "Thinking... 🤔")
 
     try:
-        reply = ask_ai(prompt, message.chat.id, message.from_user.id)
+        # 📚 CUSTOM KNOWLEDGE CHECK (NEW 🔥)
+        custom_reply = check_custom_knowledge(prompt)
+
+        if custom_reply:
+            reply = custom_reply
+        else:
+            reply = ask_ai(prompt, message.chat.id, message.from_user.id)
 
         bot.edit_message_text(
             reply[:4000],

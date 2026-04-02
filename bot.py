@@ -48,13 +48,14 @@ def get_memory(chat_id, user_id):
     return chat_memory[key]
 
 # ==============================
-# 📚 CUSTOM KNOWLEDGE (NEW 🔥)
+# 📚 CUSTOM KNOWLEDGE (UPGRADED 🔥)
 # ==============================
 CUSTOM_KNOWLEDGE = [
     {
         "keywords": [
             "who made you", "who created you", "who developed you",
-            "who owns you", "who is your creator", "kisne banaya"
+            "who owns you", "who is your creator", "kisne banaya",
+            "kisne banaya tumhe"
         ],
         "answer": "I was made by Kaveer 🚀"
     },
@@ -84,12 +85,48 @@ CUSTOM_KNOWLEDGE = [
     }
 ]
 
+# 🔥 normalize + slang fix
+def normalize_text(text):
+    text = text.lower()
+
+    replacements = {
+        " u ": " you ",
+        " ur ": " your ",
+        " r ": " are ",
+        " pls ": " please ",
+        " plz ": " please ",
+        " tum ": " you ",
+        " tumhe ": " you ",
+        " kya ": " what ",
+        " kaun ": " who "
+    }
+
+    text = f" {text} "
+
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+
+    # remove extra symbols
+    text = re.sub(r'[^a-z0-9\s]', ' ', text)
+    text = re.sub(r'\s+', ' ', text)
+
+    return text.strip()
+
+# 🔥 fuzzy match logic
 def check_custom_knowledge(prompt):
-    prompt = prompt.lower()
+    prompt = normalize_text(prompt)
 
     for item in CUSTOM_KNOWLEDGE:
         for keyword in item["keywords"]:
+            keyword = normalize_text(keyword)
+
+            # exact contains
             if keyword in prompt:
+                return item["answer"]
+
+            # fuzzy word match (order independent)
+            words = keyword.split()
+            if sum(1 for w in words if w in prompt) >= max(1, len(words) - 1):
                 return item["answer"]
 
     return None
@@ -138,7 +175,7 @@ def scrape_website(url):
         return None
 
 # ==============================
-# 🤖 AI (FIXED 🔥)
+# 🤖 AI (UNCHANGED)
 # ==============================
 def ask_ai(prompt, chat_id, user_id):
     url = "https://openrouter.ai/api/v1/chat/completions"
@@ -206,7 +243,7 @@ def ask_ai(prompt, chat_id, user_id):
     return "❌ AI is busy, try again in a few seconds."
 
 # ==============================
-# 🎨 IMAGE GENERATION
+# 🎨 IMAGE GENERATION (UNCHANGED)
 # ==============================
 @bot.message_handler(commands=['image'])
 def generate_image(message):
@@ -272,7 +309,7 @@ def generate_image(message):
         pass
 
 # ==============================
-# 💬 HANDLER (STRICT 🔥)
+# 💬 HANDLER (ONLY SMALL ADD)
 # ==============================
 @bot.message_handler(func=lambda message: True)
 def handle(message):
@@ -331,7 +368,6 @@ def handle(message):
         wait_msg = bot.reply_to(message, "Thinking... 🤔")
 
     try:
-        # 📚 CUSTOM KNOWLEDGE CHECK (NEW 🔥)
         custom_reply = check_custom_knowledge(prompt)
 
         if custom_reply:

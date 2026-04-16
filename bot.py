@@ -1,5 +1,5 @@
 # ==============================
-# 🤖 TELEGRAM AI BOT (FINAL CLEAN 🔥)
+# 🤖 TELEGRAM AI BOT (FINAL CLEAN + REPLY SUPPORT 🔥)
 # ==============================
 
 import telebot
@@ -15,6 +15,18 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "").replace("@", "").lower()
 
 bot = telebot.TeleBot(BOT_TOKEN)
+
+# 🔹 Cache bot's user ID after startup (avoids repeated API calls)
+BOT_ID = None
+
+def init_bot_info():
+    global BOT_ID
+    try:
+        me = bot.get_me()
+        BOT_ID = me.id
+        print(f"✅ Bot initialized: @{me.username} (ID: {BOT_ID})")
+    except Exception as e:
+        print(f"⚠️ Could not fetch bot info: {e}")
 
 # ==============================
 # 🔁 MODELS
@@ -51,6 +63,15 @@ def get_memory(chat_id, user_id):
         chat_memory[key] = []
     return chat_memory[key]
 
+def add_to_memory(chat_id, user_id, role, content):
+    key = f"{chat_id}_{user_id}"
+    if key not in chat_memory:
+        chat_memory[key] = []
+    # Limit memory to last 10 messages (5 turns) to avoid context overflow
+    chat_memory[key].append({"role": role, "content": content})
+    if len(chat_memory[key]) > 10:
+        chat_memory[key] = chat_memory[key][-10:]
+
 # ==============================
 # 📚 CUSTOM KNOWLEDGE (UPGRADED 🔥)
 # ==============================
@@ -67,7 +88,7 @@ CUSTOM_KNOWLEDGE = [
         "keywords": [
             "what are you", "what can you do", "what is this bot"
         ],
-        "answer": "I’m an AI assistant bot that can answer questions and help you 🤖"
+        "answer": "I'm an AI assistant bot that can answer questions and help you 🤖"
     },
     {
         "keywords": [
@@ -85,7 +106,7 @@ CUSTOM_KNOWLEDGE = [
         "keywords": [
             "are you human", "are you real", "do you sleep"
         ],
-        "answer": "I’m just code… but always online 😏"
+        "answer": "I'm just code… but always online 😏"
     }
 ]
 
@@ -206,13 +227,19 @@ def ask_ai(prompt, chat_id, user_id):
             response = requests.post(url, headers=headers, json={"model": model, "messages": messages}, timeout=30)
             data = response.json()
 
-            if "choices" not in data:
+            if "choices" not in data or not data["choices"]:
                 continue
 
             reply = clean_text(data["choices"][0]["message"]["content"])
+            
+            # ✅ Save conversation to memory
+            add_to_memory(chat_id, user_id, "user", prompt)
+            add_to_memory(chat_id, user_id, "assistant", reply)
+            
             return reply
 
-        except:
+        except Exception as e:
+            print(f"Model {model} error: {e}")
             continue
 
     return "❌ AI is busy, try again."
@@ -256,13 +283,15 @@ def generate_image(message):
     bot.delete_message(message.chat.id, msg.message_id)
 
 # ==============================
-# 💬 HANDLER
+# 💬 HANDLER (UPGRADED: Reply-to-Bot Support ✅)
 # ==============================
 @bot.message_handler(func=lambda message: True)
 def handle(message):
+    # Skip non-text/caption messages
     if not message.text and not message.caption:
         return
 
+    # Anti-spam check
     if not can_use(message.from_user.id):
         return
 
@@ -270,25 +299,42 @@ def handle(message):
     text_lower = text.lower()
 
     prompt = None
+    is_reply_to_bot = False
 
+    # 🔹 Check if this message is a reply to the bot's own message
+    if message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.id == BOT_ID:
+        is_reply_to_bot = True
+
+    # Determine if bot should respond
     if message.chat.type == "private":
+        # ✅ Always respond in DMs
         prompt = text
 
-    elif message.reply_to_message and BOT_USERNAME and f"@{BOT_USERNAME}" in text_lower:
+    elif is_reply_to_bot:
+        # ✅ User replied to bot's message → continue chat (no @ needed)
         reply_msg = message.reply_to_message
-        context = reply_msg.text or reply_msg.caption or "Unsupported message"
-        command = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
-        prompt = f"{command}\n\nContext:\n{context}"
+        context = reply_msg.text or reply_msg.caption or "Previous message"
+        prompt = f"{text}\n\nContext (my last reply):\n{context}"
 
     elif BOT_USERNAME and f"@{BOT_USERNAME}" in text_lower:
-        prompt = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
+        # ✅ Bot was explicitly mentioned
+        if message.reply_to_message:
+            # User replied to someone + mentioned bot → include context
+            reply_msg = message.reply_to_message
+            context = reply_msg.text or reply_msg.caption or "Unsupported message"
+            command = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
+            prompt = f"{command}\n\nContext:\n{context}"
+        else:
+            prompt = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
 
     else:
+        # ❌ Not relevant → ignore
         return
 
     wait_msg = bot.reply_to(message, "Thinking... 🤔")
 
     try:
+        # Skip custom knowledge if replying to media (no text context)
         is_media_reply = (
             message.reply_to_message and
             not (message.reply_to_message.text or message.reply_to_message.caption)
@@ -301,23 +347,36 @@ def handle(message):
 
         if custom_reply:
             reply = custom_reply
+            # Still save to memory for continuity
+            add_to_memory(message.chat.id, message.from_user.id, "user", prompt)
+            add_to_memory(message.chat.id, message.from_user.id, "assistant", reply)
         else:
             reply = ask_ai(prompt, message.chat.id, message.from_user.id)
+
+        # Ensure reply isn't empty
+        if not reply or reply.strip() == "":
+            reply = "Hmm, I got blank. Try rephrasing? 🤔"
 
         bot.edit_message_text(reply[:4000], wait_msg.chat.id, wait_msg.message_id)
 
     except Exception as e:
-        print("Error:", e)
+        print("Handler error:", e)
         bot.edit_message_text("Error 😅 Try again.", wait_msg.chat.id, wait_msg.message_id)
 
 # ==============================
 # 🚀 START
 # ==============================
-print("Bot is running...")
+if __name__ == "__main__":
+    print("🚀 Initializing bot...")
+    init_bot_info()  # 🔹 Fetch bot ID once at startup
+    print("✅ Bot is running... Press Ctrl+C to stop.")
 
-while True:
-    try:
-        bot.infinity_polling(skip_pending=True)
-    except Exception as e:
-        print("Restarting:", e)
-        time.sleep(5)
+    while True:
+        try:
+            bot.infinity_polling(skip_pending=True, timeout=30)
+        except KeyboardInterrupt:
+            print("\n🛑 Bot stopped by user.")
+            break
+        except Exception as e:
+            print(f"⚠️ Polling error: {e}. Restarting in 5s...")
+            time.sleep(5)

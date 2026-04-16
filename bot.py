@@ -1,5 +1,5 @@
 # ==============================
-# 🤖 TELEGRAM AI BOT (FINAL CLEAN + REPLY SUPPORT 🔥)
+# 🤖 TELEGRAM AI BOT (FINAL CLEAN + REPLY SUPPORT - NO HARDCODED KNOWLEDGE 🔥)
 # ==============================
 
 import telebot
@@ -71,91 +71,6 @@ def add_to_memory(chat_id, user_id, role, content):
     chat_memory[key].append({"role": role, "content": content})
     if len(chat_memory[key]) > 10:
         chat_memory[key] = chat_memory[key][-10:]
-
-# ==============================
-# 📚 CUSTOM KNOWLEDGE (UPGRADED 🔥)
-# ==============================
-CUSTOM_KNOWLEDGE = [
-    {
-        "keywords": [
-            "who made you", "who created you", "who developed you",
-            "who owns you", "who is your creator", "kisne banaya",
-            "kisne banaya tumhe"
-        ],
-        "answer": "I was made by Kaveer 🚀"
-    },
-    {
-        "keywords": [
-            "what are you", "what can you do", "what is this bot"
-        ],
-        "answer": "I'm an AI assistant bot that can answer questions and help you 🤖"
-    },
-    {
-        "keywords": [
-            "best rom", "best custom rom", "which rom should i use"
-        ],
-        "answer": "Matrixx / Evolution X are great choices 🔥"
-    },
-    {
-        "keywords": [
-            "what is htsr", "htsr meaning", "high touch sampling rate"
-        ],
-        "answer": "HTSR improves touch response, especially in gaming 🎮"
-    },
-    {
-        "keywords": [
-            "are you human", "are you real", "do you sleep"
-        ],
-        "answer": "I'm just code… but always online 😏"
-    }
-]
-
-# ==============================
-# 🔥 NORMALIZE
-# ==============================
-def normalize_text(text):
-    text = text.lower()
-
-    replacements = {
-        " u ": " you ",
-        " ur ": " your ",
-        " r ": " are ",
-        " pls ": " please ",
-        " plz ": " please ",
-        " tum ": " you ",
-        " tumhe ": " you ",
-        " kya ": " what ",
-        " kaun ": " who "
-    }
-
-    text = f" {text} "
-
-    for k, v in replacements.items():
-        text = text.replace(k, v)
-
-    text = re.sub(r'[^a-z0-9\s]', ' ', text)
-    text = re.sub(r'\s+', ' ', text)
-
-    return text.strip()
-
-# ==============================
-# 🧠 MATCH
-# ==============================
-def check_custom_knowledge(prompt):
-    prompt = normalize_text(prompt)
-
-    for item in CUSTOM_KNOWLEDGE:
-        for keyword in item["keywords"]:
-            keyword = normalize_text(keyword)
-
-            if keyword in prompt:
-                return item["answer"]
-
-            words = keyword.split()
-            if sum(1 for w in words if w in prompt) >= max(1, len(words) - 1):
-                return item["answer"]
-
-    return None
 
 # ==============================
 # ✨ CLEAN OUTPUT
@@ -283,7 +198,7 @@ def generate_image(message):
     bot.delete_message(message.chat.id, msg.message_id)
 
 # ==============================
-# 💬 HANDLER (UPGRADED: Reply-to-Bot Support ✅)
+# 💬 HANDLER (SIMPLIFIED: AI-ONLY RESPONSES ✅)
 # ==============================
 @bot.message_handler(func=lambda message: True)
 def handle(message):
@@ -334,24 +249,8 @@ def handle(message):
     wait_msg = bot.reply_to(message, "Thinking... 🤔")
 
     try:
-        # Skip custom knowledge if replying to media (no text context)
-        is_media_reply = (
-            message.reply_to_message and
-            not (message.reply_to_message.text or message.reply_to_message.caption)
-        )
-
-        if not is_media_reply:
-            custom_reply = check_custom_knowledge(prompt)
-        else:
-            custom_reply = None
-
-        if custom_reply:
-            reply = custom_reply
-            # Still save to memory for continuity
-            add_to_memory(message.chat.id, message.from_user.id, "user", prompt)
-            add_to_memory(message.chat.id, message.from_user.id, "assistant", reply)
-        else:
-            reply = ask_ai(prompt, message.chat.id, message.from_user.id)
+        # 🔹 Removed custom knowledge check — AI handles everything now
+        reply = ask_ai(prompt, message.chat.id, message.from_user.id)
 
         # Ensure reply isn't empty
         if not reply or reply.strip() == "":

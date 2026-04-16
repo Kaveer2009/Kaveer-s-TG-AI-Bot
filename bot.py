@@ -1,5 +1,5 @@
 # ==============================
-# 🤖 TELEGRAM AI BOT (FINAL CLEAN + REPLY SUPPORT - NO HARDCODED KNOWLEDGE 🔥)
+# 🤖 TELEGRAM AI BOT (FINAL + WEB SEARCH 🔥)
 # ==============================
 
 import telebot
@@ -9,6 +9,7 @@ import time
 import re
 from bs4 import BeautifulSoup
 from io import BytesIO
+from urllib.parse import quote_plus
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -16,7 +17,7 @@ BOT_USERNAME = os.getenv("BOT_USERNAME", "").replace("@", "").lower()
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# 🔹 Cache bot's user ID after startup (avoids repeated API calls)
+# 🔹 Cache bot's user ID after startup
 BOT_ID = None
 
 def init_bot_info():
@@ -45,6 +46,7 @@ MODELS = [
 # 🚫 ANTI-SPAM
 # ==============================
 last_used = {}
+search_cache = {}  # 🔹 Cache search results (30s TTL)
 
 def can_use(user_id):
     if user_id in last_used and time.time() - last_used[user_id] < 3:
@@ -67,7 +69,6 @@ def add_to_memory(chat_id, user_id, role, content):
     key = f"{chat_id}_{user_id}"
     if key not in chat_memory:
         chat_memory[key] = []
-    # Limit memory to last 10 messages (5 turns) to avoid context overflow
     chat_memory[key].append({"role": role, "content": content})
     if len(chat_memory[key]) > 10:
         chat_memory[key] = chat_memory[key][-10:]
@@ -83,7 +84,65 @@ def clean_text(text):
     return text
 
 # ==============================
-# 🌐 URL
+# 🔍 WEB SEARCH (DuckDuckGo - No API Key)
+# ==============================
+def search_web(query, max_results=5):
+    """Search DuckDuckGo and return top results as text"""
+    cache_key = query.lower().strip()
+    
+    # 🔹 Return cached result if recent (<30s)
+    if cache_key in search_cache:
+        result, timestamp = search_cache[cache_key]
+        if time.time() - timestamp < 30:
+            return result
+
+    try:
+        # DuckDuckGo HTML search endpoint
+        url = f"https://html.duckduckgo.com/html?q={quote_plus(query)}&kf=-1&kl=wt-wt"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.text, "html.parser")
+        
+        results = []
+        for result in soup.select(".result")[:max_results]:
+            title_tag = result.select_one(".result__title")
+            snippet_tag = result.select_one(".result__snippet")
+            link_tag = result.select_one(".result__url")
+            
+            if title_tag and snippet_tag:
+                title = title_tag.get_text(strip=True)
+                snippet = snippet_tag.get_text(strip=True)
+                link = link_tag.get_text(strip=True) if link_tag else ""
+                results.append(f"• {title}\n  {snippet}\n  Source: {link}")
+        
+        if not results:
+            return None
+            
+        search_text = f"🔍 Search results for '{query}':\n\n" + "\n\n".join(results)
+        
+        # 🔹 Cache the result
+        search_cache[cache_key] = (search_text, time.time())
+        return search_text
+        
+    except Exception as e:
+        print(f"Search error: {e}")
+        return None
+
+def needs_fresh_info(prompt):
+    """Check if query likely needs live internet data"""
+    trigger_words = [
+        "latest", "news", "today", "yesterday", "now", "current",
+        "recent", "new", "2026", "2025", "this week", "this month",
+        "release", "update", "launch", "announced", "just",
+        "score", "match", "result", "price", "stock", "crypto",
+        "weather", "trending", "viral", "breaking"
+    ]
+    prompt_lower = prompt.lower()
+    return any(word in prompt_lower for word in trigger_words)
+
+# ==============================
+# 🌐 URL SCRAPING
 # ==============================
 def extract_url(text):
     urls = re.findall(r'(https?://\S+)', text)
@@ -97,20 +156,14 @@ def fix_reddit_url(url):
 def scrape_website(url):
     try:
         url = fix_reddit_url(url)
-
         headers = {"User-Agent": "Mozilla/5.0"}
         r = requests.get(url, headers=headers, timeout=10)
-
         soup = BeautifulSoup(r.text, "html.parser")
-
         for tag in soup(["script", "style"]):
             tag.decompose()
-
         text = soup.get_text(separator="\n")
         text = "\n".join([l.strip() for l in text.splitlines() if l.strip()])
-
         return text[:8000]
-
     except Exception as e:
         print("Scrape error:", e)
         return None
@@ -118,45 +171,35 @@ def scrape_website(url):
 # ==============================
 # 🤖 AI
 # ==============================
-def ask_ai(prompt, chat_id, user_id):
+def ask_ai(prompt, chat_id, user_id, search_context=None):
     url = "https://openrouter.ai/api/v1/chat/completions"
-
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
     }
 
     memory = get_memory(chat_id, user_id)
+    
+    # 🔹 Build system message with optional search context
+    system_content = "Give clean, simple answers without markdown symbols. Use '-' for bullet points."
+    if search_context:
+        system_content += f"\n\n🔍 LIVE INFO AVAILABLE:\n{search_context}\n\nUse this info to answer accurately. If info is outdated or irrelevant, rely on your knowledge."
 
-    messages = [
-        {
-            "role": "system",
-            "content": "Give clean, simple answers without markdown symbols. Use '-' for bullet points."
-        }
-    ] + memory + [
-        {"role": "user", "content": prompt}
-    ]
+    messages = [{"role": "system", "content": system_content}] + memory + [{"role": "user", "content": prompt}]
 
     for model in MODELS:
         try:
-            response = requests.post(url, headers=headers, json={"model": model, "messages": messages}, timeout=30)
+            response = requests.post(url, headers=headers, json={"model": model, "messages": messages}, timeout=40)
             data = response.json()
-
             if "choices" not in data or not data["choices"]:
                 continue
-
             reply = clean_text(data["choices"][0]["message"]["content"])
-            
-            # ✅ Save conversation to memory
             add_to_memory(chat_id, user_id, "user", prompt)
             add_to_memory(chat_id, user_id, "assistant", reply)
-            
             return reply
-
         except Exception as e:
             print(f"Model {model} error: {e}")
             continue
-
     return "❌ AI is busy, try again."
 
 # ==============================
@@ -165,94 +208,80 @@ def ask_ai(prompt, chat_id, user_id):
 @bot.message_handler(commands=['image'])
 def generate_image(message):
     prompt = message.text.replace('/image', '').strip()
-
     if not prompt:
         bot.reply_to(message, "Example:\n/image a cute cat 🐱")
         return
-
     msg = bot.reply_to(message, "Generating AI image... ⏳")
-
     try:
         response = requests.post(
             "https://stablehorde.net/api/v2/generate/async",
             json={"prompt": prompt},
             headers={"apikey": "0000000000"}
         ).json()
-
         request_id = response.get("id")
-
         for _ in range(10):
             check = requests.get(f"https://stablehorde.net/api/v2/generate/status/{request_id}").json()
-
             if check.get("done"):
                 img_url = check["generations"][0]["img"]
                 img = requests.get(img_url).content
                 bot.send_photo(message.chat.id, BytesIO(img))
                 break
-
             time.sleep(2)
-
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
-
     bot.delete_message(message.chat.id, msg.message_id)
 
 # ==============================
-# 💬 HANDLER (SIMPLIFIED: AI-ONLY RESPONSES ✅)
+# 💬 HANDLER (WITH WEB SEARCH ✅)
 # ==============================
 @bot.message_handler(func=lambda message: True)
 def handle(message):
-    # Skip non-text/caption messages
     if not message.text and not message.caption:
         return
-
-    # Anti-spam check
     if not can_use(message.from_user.id):
         return
 
     text = (message.text or message.caption or "").strip()
     text_lower = text.lower()
-
     prompt = None
     is_reply_to_bot = False
 
-    # 🔹 Check if this message is a reply to the bot's own message
     if message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.id == BOT_ID:
         is_reply_to_bot = True
 
-    # Determine if bot should respond
     if message.chat.type == "private":
-        # ✅ Always respond in DMs
         prompt = text
-
     elif is_reply_to_bot:
-        # ✅ User replied to bot's message → continue chat (no @ needed)
         reply_msg = message.reply_to_message
         context = reply_msg.text or reply_msg.caption or "Previous message"
         prompt = f"{text}\n\nContext (my last reply):\n{context}"
-
     elif BOT_USERNAME and f"@{BOT_USERNAME}" in text_lower:
-        # ✅ Bot was explicitly mentioned
         if message.reply_to_message:
-            # User replied to someone + mentioned bot → include context
             reply_msg = message.reply_to_message
             context = reply_msg.text or reply_msg.caption or "Unsupported message"
             command = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
             prompt = f"{command}\n\nContext:\n{context}"
         else:
             prompt = re.sub(f"@{BOT_USERNAME}", "", text, flags=re.IGNORECASE).strip()
-
     else:
-        # ❌ Not relevant → ignore
         return
 
     wait_msg = bot.reply_to(message, "Thinking... 🤔")
 
     try:
-        # 🔹 Removed custom knowledge check — AI handles everything now
-        reply = ask_ai(prompt, message.chat.id, message.from_user.id)
+        # 🔹 Check if we need live search
+        search_context = None
+        if needs_fresh_info(prompt):
+            bot.edit_message_text("Searching the web... 🌐", wait_msg.chat.id, wait_msg.message_id)
+            search_context = search_web(prompt, max_results=4)
+            if search_context:
+                print(f"✅ Search results fetched for: {prompt[:50]}...")
+            else:
+                print(f"⚠️ No search results for: {prompt[:50]}")
 
-        # Ensure reply isn't empty
+        # 🔹 Get AI response (with or without search context)
+        reply = ask_ai(prompt, message.chat.id, message.from_user.id, search_context=search_context)
+
         if not reply or reply.strip() == "":
             reply = "Hmm, I got blank. Try rephrasing? 🤔"
 
@@ -266,10 +295,9 @@ def handle(message):
 # 🚀 START
 # ==============================
 if __name__ == "__main__":
-    print("🚀 Initializing bot...")
-    init_bot_info()  # 🔹 Fetch bot ID once at startup
+    print("🚀 Initializing bot with WEB SEARCH...")
+    init_bot_info()
     print("✅ Bot is running... Press Ctrl+C to stop.")
-
     while True:
         try:
             bot.infinity_polling(skip_pending=True, timeout=30)
